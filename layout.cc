@@ -810,7 +810,7 @@ void LAYOUT_BASE::promote_or_expand_via_widths(I settled_log_width, I incoming_c
   ///////////////////////////////////////////////////
 
   // second_four should happen before setting presented_type if presented_type is inside it
-  assert(offsetof(SLAB,presented_type) == offsetof(SLAB, second_four) + sizeof(dest->second_four) - 1); 
+  // assert(offsetof(SLAB,presented_type) == offsetof(SLAB, second_four) + sizeof(dest->second_four) - 1); 
   dest->second_four = this->header_pointer_begin()->second_four;
   // dest->vector_container_width_cap_type = this->slabp->vector_container_width_cap_type;
 
@@ -1252,7 +1252,7 @@ void LAYOUT_BASE::cow_append(const SLOP &rhs)
         if(rhs.presented()->is_grouped())
         {
           u.cowed_rewrite_presented_type(this->layout()->header_get_presented_type());
-          u.slabp->presented_reserved = parent()->slabp->presented_reserved;
+          // u.slabp->presented_reserved = parent()->slabp->presented_reserved;
         }
         cow_append(u);
 
@@ -1431,14 +1431,14 @@ void LAYOUT_BASE::cow_amend_one(I k, const SLOP &rhs)
 
     bool grouped = presented()->is_grouped();
     auto old_presented = layout()->header_get_presented_type();
-    auto old_presented_reserved = parent()->slabp->presented_reserved;
+    // auto old_presented_reserved = parent()->slabp->presented_reserved;
 
     *parent() = u;
 
     if(grouped)
     {
       parent()->cowed_rewrite_presented_type(old_presented);
-      parent()->slabp->presented_reserved = old_presented_reserved;
+      // parent()->slabp->presented_reserved = old_presented_reserved;
     }
 
     

@@ -48,7 +48,6 @@ std::weak_ordering PRESENTED_BASE::compare(const SLOP& x)
 
   bool ua = parent()->is_fixed_width_unit();
   bool ub = x.is_fixed_width_unit();
-
   if(ua && ub)
   {
     PRESENTED_TYPE pa = layout()->header_get_presented_type();
@@ -107,7 +106,16 @@ std::weak_ordering PRESENTED_BASE::compare(const SLOP& x)
     auto c = std::weak_ordering::equivalent;
     bool early_break_flag = false;
 
-    auto g = [&](const SLOP& a, const SLOP& b) { c = a.compare(b); early_break_flag = std::is_neq(c);};
+
+
+    auto g = [&](const SLOP& a, const SLOP& b) { c = a.compare(b);
+kerr() << "a: " << (a) << "\n";
+kerr() << "b: " << (b) << "\n";
+kerr() << "c==0: " << (0==c) << "\n";
+kerr() << "looks like indexing is broken somehow and/or comparing \n";
+
+
+      early_break_flag = (0 !=c);};  // std::is_neq(c);};
     parent()->iterator_duplex_presented_subslop(g, x, &early_break_flag);
 
     return c;

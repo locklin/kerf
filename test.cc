@@ -116,7 +116,7 @@ TEST(BasicKerfUnitTests, BitInterferenceTests)
   EXPECT_TRUE(0==s.reference_management_arena);
   EXPECT_TRUE(0==s.m_memory_expansion_size);
   EXPECT_TRUE(0==s.r_slab_reference_count);
-  EXPECT_TRUE(0==s.a_memory_attribute_reserved);
+  // EXPECT_TRUE(0==s.a_memory_attribute_reserved);
   EXPECT_TRUE(!s.sutex.writer_waiting);
   EXPECT_TRUE(0==s.sutex.counter);
 
@@ -126,7 +126,7 @@ TEST(BasicKerfUnitTests, BitInterferenceTests)
   EXPECT_TRUE(0==s.reference_management_arena);
   EXPECT_TRUE(0==s.m_memory_expansion_size);
   EXPECT_TRUE(0==s.r_slab_reference_count);
-  EXPECT_TRUE(0==s.a_memory_attribute_reserved);
+  // EXPECT_TRUE(0==s.a_memory_attribute_reserved);
   EXPECT_TRUE(!s.sutex.writer_waiting);
   EXPECT_TRUE(0==s.sutex.counter);
 
@@ -136,7 +136,7 @@ TEST(BasicKerfUnitTests, BitInterferenceTests)
   EXPECT_TRUE(1==s.reference_management_arena);
   EXPECT_TRUE(0==s.m_memory_expansion_size);
   EXPECT_TRUE(0==s.r_slab_reference_count);
-  EXPECT_TRUE(0==s.a_memory_attribute_reserved);
+  // EXPECT_TRUE(0==s.a_memory_attribute_reserved);
   EXPECT_TRUE(!s.sutex.writer_waiting);
   EXPECT_TRUE(0==s.sutex.counter);
 
@@ -146,7 +146,7 @@ TEST(BasicKerfUnitTests, BitInterferenceTests)
   EXPECT_TRUE(1==s.reference_management_arena);
   EXPECT_TRUE(1==s.m_memory_expansion_size);
   EXPECT_TRUE(0==s.r_slab_reference_count);
-  EXPECT_TRUE(0==s.a_memory_attribute_reserved);
+  // EXPECT_TRUE(0==s.a_memory_attribute_reserved);
   EXPECT_TRUE(!s.sutex.writer_waiting);
   EXPECT_TRUE(0==s.sutex.counter);
 
@@ -156,17 +156,17 @@ TEST(BasicKerfUnitTests, BitInterferenceTests)
   EXPECT_TRUE(1==s.reference_management_arena);
   EXPECT_TRUE(1==s.m_memory_expansion_size);
   EXPECT_TRUE(1==s.r_slab_reference_count);
-  EXPECT_TRUE(0==s.a_memory_attribute_reserved);
+  // EXPECT_TRUE(0==s.a_memory_attribute_reserved);
   EXPECT_TRUE(!s.sutex.writer_waiting);
   EXPECT_TRUE(0==s.sutex.counter);
 
-  s.a_memory_attribute_reserved = 1;
+  // s.a_memory_attribute_reserved = 1;
 
   EXPECT_TRUE(1==s.t_slab_object_layout_type);
   EXPECT_TRUE(1==s.reference_management_arena);
   EXPECT_TRUE(1==s.m_memory_expansion_size);
   EXPECT_TRUE(1==s.r_slab_reference_count);
-  EXPECT_TRUE(1==s.a_memory_attribute_reserved);
+  // EXPECT_TRUE(1==s.a_memory_attribute_reserved);
   EXPECT_TRUE(!s.sutex.writer_waiting);
   EXPECT_TRUE(0==s.sutex.counter);
 
@@ -176,7 +176,7 @@ TEST(BasicKerfUnitTests, BitInterferenceTests)
   EXPECT_TRUE(1==s.reference_management_arena);
   EXPECT_TRUE(1==s.m_memory_expansion_size);
   EXPECT_TRUE(1==s.r_slab_reference_count);
-  EXPECT_TRUE(1==s.a_memory_attribute_reserved);
+  // EXPECT_TRUE(1==s.a_memory_attribute_reserved);
   EXPECT_TRUE(s.sutex.writer_waiting);
   EXPECT_TRUE(0==s.sutex.counter);
 
@@ -186,7 +186,7 @@ TEST(BasicKerfUnitTests, BitInterferenceTests)
   EXPECT_TRUE(1==s.reference_management_arena);
   EXPECT_TRUE(1==s.m_memory_expansion_size);
   EXPECT_TRUE(1==s.r_slab_reference_count);
-  EXPECT_TRUE(1==s.a_memory_attribute_reserved);
+  // EXPECT_TRUE(1==s.a_memory_attribute_reserved);
   EXPECT_TRUE(s.sutex.writer_waiting);
   EXPECT_TRUE(1==s.sutex.counter);
 
@@ -219,7 +219,20 @@ TEST(BasicKerfUnitTests, CompareTests)
   EXPECT_TRUE (SLOP(3) == 3);
   EXPECT_FALSE(SLOP(3) == 4);
   EXPECT_TRUE (SLOP(3) == 3.0);
+  EXPECT_TRUE (SLOP(1,2) == SLOP(1,2));
+  EXPECT_FALSE(SLOP(1) > SLOP(2));
+  EXPECT_TRUE (SLOP(2) < SLOP(3));
+
+  auto c = SLOP(1,2);
+  auto d = SLOP(1,3);
+kerr() << "c[0]: " << (c[0]) << "\n";
+kerr() << "c < d: " << (c < d) << "\n";
+  c.inspect();
+  d.inspect();
+
+
   EXPECT_TRUE (SLOP(1,2) < SLOP(1,3));
+exit(-1);
   EXPECT_FALSE(SLOP(1,2) > SLOP(1,3));
   EXPECT_FALSE(SLOP(1,3) < SLOP(1,2));
   EXPECT_TRUE (SLOP(1,3) > SLOP(1,2));

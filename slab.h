@@ -88,11 +88,12 @@ struct SLAB
           
          union {
            struct {
-              UC                 t_slab_object_layout_type:4; 
+              UC                 t_slab_object_layout_type:4;
 REFERENCE_MANAGEMENT_ARENA_TYPE reference_management_arena:2;
               UC                   m_memory_expansion_size:6;
-              UC                    r_slab_reference_count:4;   
-              UC               a_memory_attribute_reserved:3;
+              // UC               a_memory_attribute_reserved:3;
+              // UC                    r_slab_reference_count:4;
+              PRESENTED_TYPE presented_type:7; // was resolved_type. // 2021.11.22 I see, we'd rather have presented_type in the first_four bytes of slab because then if we ever make an 8-byte=4+4 (instead of 16-byte=8+8) atom/unit then it doesn't break all of the code that depends on that [and then hope we never bother with 4-byte=2+2 atoms or less]. The natural piece to move to the second_four is the sutex. There is not a good reason to keep the sutex up front except that it's memory-relevant. [Even then, you'd still need guaranteed placement *and* 1-byte width for PRESENTED_TYPE in any smaller layout types, similar to guaranteed placement and width for `t_slab_object_layout_type` at the front]
            } __attribute__ ((packed));
            // You can add say UI filler:13 or corresponding UC here but you need to pack this part of the struct
            // Separately, if you remove packed here, you'll cause a test to fail, as it will run over the beginning of SUTEX
@@ -259,17 +260,18 @@ REFERENCE_MANAGEMENT_ARENA_TYPE reference_management_arena:2;
 
                  };
 
-                 struct{ 
-                    
-                    union{
-                      UC layout_and_presented_reserved_byte:8;
-                      struct {
-                        UC layout_reserved:4;
-                        UC presented_reserved:4; // this is a weird thing we may want to return. one of the issues with presented-level attributes is subclasses must respect parent classes and not clobber each other's bytes. layout types are flat not hierarchical
-                      };
-                    };
+                 struct{
 
-                    PRESENTED_TYPE presented_type; // was resolved_type. // 2021.11.22 I see, we'd rather have presented_type in the first_four bytes of slab because then if we ever make an 8-byte (instead of 16-byte) atom/unit then it doesn't break all of the code that depends on that [and then hope we never bother with 4-byte atoms or less]. The natural piece to move to the second_four is the sutex. There is not a good reason to keep the sutex up front except that it's memory-relevant. [Even then, you'd still need guaranteed placement *and* 1-byte width for PRESENTED_TYPE in any smaller layout types, similar to guaranteed placement and width for `t_slab_object_layout_type` at the front]
+                    // union{
+                    //   UC layout_and_presented_reserved_byte:8;
+                    //   struct {
+                    //     UC layout_reserved:4;
+                    //     UC presented_reserved:4; // this is a weird thing we may want to return. one of the issues with presented-level attributes is subclasses must respect parent classes and not clobber each other's bytes. layout types are flat not hierarchical
+                    //   };
+                    // };
+
+
+                    uint16_t r_slab_reference_count;
                  };
 
                };

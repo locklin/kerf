@@ -957,7 +957,7 @@ void SLOP::coerce_FLAT_COMPLETE_JUMP_LIST_WITH_SUBLISTS()
   if(this->presented()->is_grouped())
   {
     v.cowed_rewrite_presented_type(this->layout()->header_get_presented_type());
-    v.slabp->presented_reserved = this->slabp->presented_reserved;
+    // v.slabp->presented_reserved = this->slabp->presented_reserved;
   }
 
   *this = v;
@@ -998,7 +998,7 @@ void SLOP::coerce_UNFLAT()
   if(this->presented()->is_grouped()) 
   {
     u.cowed_rewrite_presented_type(this->layout()->header_get_presented_type());
-    u.slabp->presented_reserved = this->slabp->presented_reserved;
+    // u.slabp->presented_reserved = this->slabp->presented_reserved;
   }
 
   *this = u;
