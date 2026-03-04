@@ -62,11 +62,11 @@ namespace KERF_NAMESPACE {
     libevent_global_shutdown();
 
 #if DEBUG
-    if(0 < The_Mmap_Total_Byte_Counter) std::cerr << "Error 0 < The_Mmap_Total_Byte_Counter: " << (The_Mmap_Total_Byte_Counter) << "\n";
-    if(!The_Did_Interrupt_Flag) assert(0==The_Mmap_Total_Byte_Counter);
-
+    if(0 < The_Mmap_Total_Byte_Counter) std::cerr << "Error: 0 < The_Mmap_Total_Byte_Counter: " << (The_Mmap_Total_Byte_Counter) << "\n";
     if(0 < The_Munmap_Leak_Tracker) std::cerr << "Error: 0 < The_Munmap_Leak_Tracker: " << (The_Munmap_Leak_Tracker) << "\n";
-    if(!The_Did_Interrupt_Flag) assert(0==The_Munmap_Leak_Tracker);
+    // Aborting here will shadow the unfreed tracker from giving information about what was left unfreed
+    // if(!The_Did_Interrupt_Flag) assert(0==The_Mmap_Total_Byte_Counter);
+    // if(!The_Did_Interrupt_Flag) assert(0==The_Munmap_Leak_Tracker);
 #endif
 
 

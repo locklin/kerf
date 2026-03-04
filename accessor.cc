@@ -85,7 +85,7 @@ UC ACCESSOR_MECHANISM_BASE::minimal_int_log_width_needed_to_store_magnitude(I i)
         // #if 2 >= INT_MINIMAL_WIDTH_FOR_INFS_AND_NANS
         //      + (!!(i <= -II2)) + (!!(i >=  II2))
         // #else
-             + (!!(i <  -IN2)) + (!!(i >   II2))
+             + (!!(i <  -(I)IN2)) + (!!(i >   II2))
         // #endif 
 
         // #if 1 >= INT_MINIMAL_WIDTH_FOR_INFS_AND_NANS

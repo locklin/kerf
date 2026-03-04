@@ -41,6 +41,13 @@ MEMORY_POOL::~MEMORY_POOL()
     {
       for(auto v : test_alloc_tracker)
       {
+        std::cerr << "unfreed " << v << "\n";
+      }
+
+      std::cerr << "----------------" << "\n";
+
+      for(auto v : test_alloc_tracker)
+      {
         SLOP u((SLAB*)v);
         std::cerr << "unfreed " << v << " [+" << (I)u.layout()->header_get_slab_reference_count() << "]" << ": " << (u) << "\n";
       }

@@ -89,6 +89,9 @@ struct TRANSMIT_NODE // point of this is to avoid n^2 constructors
 
 struct TRANSMITTER
 {
+  // The idea behind the TRANSMITTER is a universal object sending method. Copying, compressing, etc. In-memory, to the drive, over the inet wire, over pipes, etc.
+
+
   // TODO checklist item: make sure we set the proper arena on the receiver side. all subelements should be a transient-like arena (0), which can be preserved on both sides of the wire. 
   // TODO zero the sutex rwlock on any receiving side
 

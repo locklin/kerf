@@ -1,21 +1,23 @@
 namespace KERF_NAMESPACE {
 
 typedef enum LAYOUT_TYPE_MEMBER : UC {
-  LAYOUT_TYPE_UNCOUNTED_ATOM            = 0, // Remark. Better names might be SEGMENT+RAY or perhaps BUFFER, BYTES, BUF16/BUF4
-  LAYOUT_TYPE_COUNTED_VECTOR            = 1,
-  LAYOUT_TYPE_COUNTED_VECTOR_FILLED     = 2,
-  LAYOUT_TYPE_COUNTED_VECTOR_PACKED     = 3,     // SMALLCOUNT that starts payload where ->n was.
+  LAYOUT_TYPE_UNCOUNTED_ATOM           = 0, // Remark. Better names might be SEGMENT+RAY or perhaps BUFFER, BYTES, BUF16/BUF4
+  LAYOUT_TYPE_COUNTED_VECTOR           = 1,
+  LAYOUT_TYPE_COUNTED_VECTOR_FILLED    = 2,
+  LAYOUT_TYPE_COUNTED_VECTOR_PACKED    = 3,     // SMALLCOUNT that starts payload where ->n was.
   // Idea. you could also do like a VECTOR_SMALLCOUNT_UNPACKED and make the header even bigger if you need (doubtful we would) 
   // Idea. you could also make a VECTOR_VARIABLY_SPECIFIED (header size, counter width, payload start) and use LAYOUT's virtual methods to act based on slab attributes. but, yuck. also, diminishing returns on expanding header, versus say using vector of slab4. - this is liable to break some useful hacks though (in promote-expand?)
   // POTENTIAL_OPTIMIZATION_POINT  LAYOUT_TYPE_COUNTED_VECTOR_SUPER_PACKED_STRING: start the payload after ->presented_type + a 1byte_counter (alternatively null terminate, but then some strings ('\0'-containing) are verboten). This yields a small improvement from 8byte PACKED strings to 11byte/12byte. If you really cheat and do this with layout_type only, you can free up 15.5 bytes of string per slab. (Overload things like returning [what was] ->m as constant and setting ->m as no-op.) Idea. What we could do for a refactor/could've done is start by building layout with a minimalist LAYOUT_TYPE and fully specified class methods which don't actually have access to bits past the layout_type on the slab (including no-op writes). Then the code would already be built around this concept. TODO: go through and turn references to SLAB elements like `r_slab_reference_count` into getter/setter wherever possible. reference counting should probably be in here [layout.h/cc] anyway?
-  LAYOUT_TYPE_TAPE_HEAD_UNCOUNTED_ATOM  = 4, // NB. It's OK to wall off access to TAPE_HEADs (or have them mutate/return into plain old atoms/layouts/slops), they're supposed to be iterators primarily.
-  LAYOUT_TYPE_TAPE_HEAD_COUNTED_VECTOR  = 5, // // Remark: String TAPE_HEADs need these, for eg STRING_FIBER
-  LAYOUT_TYPE_COUNTED_LIST              = 6,
-  LAYOUT_TYPE_COUNTED_LIST_PACKED       = 7,
+  LAYOUT_TYPE_TAPE_HEAD_UNCOUNTED_ATOM = 4, // NB. It's OK to wall off access to TAPE_HEADs (or have them mutate/return into plain old atoms/layouts/slops), they're supposed to be iterators primarily.
+  LAYOUT_TYPE_TAPE_HEAD_COUNTED_VECTOR = 5, // Remark: String TAPE_HEADs need these, for eg STRING_FIBER
+  LAYOUT_TYPE_COUNTED_LIST             = 6,
+  LAYOUT_TYPE_COUNTED_LIST_PACKED      = 7,
   // LAYOUT_TYPE_COUNTED_LIST_SMALLCOUNT | LAYOUT_TYPE_COUNTED_LIST_PACKED, // P_O_P use two-bytes of counter, freeing 8bytes at ->n (y tho?) | Warning: Will this play nicely with GROUPED? Only if you promote on threatened overflow of byte counter (which can happen), and if you weren't using the previously additional space to pack in more attributes.
-  LAYOUT_TYPE_COUNTED_JUMP_LIST         = 8, // NB. Do not pack: only gives advantage if payload is longer than packed anyway. Remark. If you write many separate small JUMP_LIST files to the drive, there's a trivial advantage in packing, not worth it (and why would you do that?).
-  LAYOUT_TYPE_MESSAGE_HEADER            = 9,
-  LAYOUT_TYPE_ESCAPE_VALUE              = 10,
+  LAYOUT_TYPE_COUNTED_JUMP_LIST        = 8, // NB. Do not pack: only gives advantage if payload is longer than packed anyway. Remark. If you write many separate small JUMP_LIST files to the drive, there's a trivial advantage in packing, not worth it (and why would you do that?).
+  LAYOUT_TYPE_COUNTED_LIST_GROUP_ZIP   = 9, // Remark. If you're only going to implement one compressed layout, do the VARSLAB version with embedded RLINK3 unit enabled instead of the RLINK3-only vector version so we can embed compressed objects in bigger singlefile objects.
+  LAYOUT_TYPE_ZIPPED = LAYOUT_TYPE_COUNTED_LIST_GROUP_ZIP,
+  LAYOUT_TYPE_MESSAGE_HEADER           = 14,
+  LAYOUT_TYPE_ESCAPE_VALUE             = 15,
   /////////////////
   // LAYOUT_TYPE_COUNTED_VECTOR_SMALLCOUNT = 3, // frees ->n in header, for attributes and such, but the tradeoff is only counts to 255 P_O_P: if we never literally use this in objects, we can get rid of the LAYOUT_TYPE and simply keep the CLASS to be available to the other LAYOUT classes that depend on the logic. Well, we're planning to use SMALLCOUNT for MAPS in the KERF TREE so they have compiled reference count, but it seems possible so far we could still do this with PACKED instead, possibly. 2021.10.10 Doesn't seem like we relied on this anywhere (possibly we did on the LAYOUT classes), so I've tentatively disabled it to free up address space
   // Idea. LAYOUT_TYPE_COUNTED_VECTOR_FILLED_VAN_EMDE_BOAS. the indexing methods handle the math conversions
@@ -327,12 +329,48 @@ typedef enum DRIVE_ACCESS_KIND_MEMBER : UC {
 } DRIVE_ACCESS_KIND; 
 inline std::ostream &operator<<(std::ostream &os, DRIVE_ACCESS_KIND c) { return os << static_cast<int>(c); }
 
+typedef enum ZIP_ATTRIBUTE_MEMBER : UC {
+  ZIP_ATTRIBUTE_KERF_FORMAT_VERSION_NUMBER = 0, // eg, 1
+  ZIP_ATTRIBUTE_ALGORITHM                  = 1, // eg, lz4
+  ZIP_ATTRIBUTE_TRANSFORMS_ARRAY           = 2, // allows duplicates, enums have forward and inverse methods, walking backwards invokes the inverse transforms.
+  ZIP_ATTRIBUTE_WINDOW_SIZE                = 3, // #bytes
+  ZIP_ATTRIBUTE_PROPRIETARY_POWER_FLOAT    = 4, // eg, lz4 acceleration
+} ZIP_ATTRIBUTE; 
+inline std::ostream &operator<<(std::ostream &os, ZIP_ATTRIBUTE c) { return os << static_cast<int>(c); }
+
+typedef enum ZIP_ALGORITHM_MEMBER : UC {
+  ZIP_ALGORITHM_IDENTITY = 0,
+  ZIP_ALGORITHM_LZ4_1    = 1,
+  ZIP_ALGORITHM_ZSTD_1   = 2,
+} ZIP_ALGORITHM; 
+inline std::ostream &operator<<(std::ostream &os, ZIP_ALGORITHM c) { return os << static_cast<int>(c); }
+
+typedef enum ZIP_TRANFORMS_MEMBER : UC { // var_byte_grouping: detect from object type chunk width bytes 1,2,4, or 8 (eg vectors of 64-bit ints yields 8). previously these were explicit but I moved those to spent.txt NB. we get the fixed chunk size transforms for free by just using the var ones with a constant argument
+  ZIP_TRANSFORMS_IDENTITY                         = 0,
+  ZIP_TRANSFORMS_DELTA_VAR_BYTE_GROUPING          = 1, // subtract each pair of 64-bit integers and store differences only NB. We don't need delta-delta (except maybe as POP, see kerf1 implementation) because we can store two deltas in the transforms array.
+  ZIP_TRANSFORMS_XOR_VAR_BYTE_GROUPING            = 2, // store pairwise xor
+  ZIP_TRANSFORMS_XOR_BITS                         = 3, // store pairwise xor, of each pair of bits
+  ZIP_TRANSFORMS_BYTES_TO_FRONT_VAR_BYTE_GROUPING = 4, // what was the first 64-bit integer is replaced by the zero-th bytes of the first 8 64-bit integers, then next by 0th bytes of the next 8, and so on, until 1st bytes, 2nd bytes, ...
+  ZIP_TRANSFORMS_BITS_TO_FRONT_VAR_BYTE_GROUPING  = 5, // bits instead of bytes. all the first bits, then second bits, etc., from the groupings.
+  ZIP_TRANSFORMS_FLOAT_TO_FRONT_VAR_BYTE_GROUPING = 6, // IEEE 754: all sign-bits to front, then exponents to front, then mantissas=significands=fractions. NB. probably irrelevant given bits_to_front, unless you're going to run 'exponent'-width-sized deltas, xors, etc.
+  ZIP_TRANSFORMS_BURROWS_WHEELER                  = 7,
+  ZIP_TRANSFORMS_RYABKO_MOVE_TO_FRONT             = 8, // ryabko "book stack" MTF for strings / text/ json
+  // Idea. Some form of RUN LENGTH ENCODER transform
+} ZIP_TRANSFORMS; 
+inline std::ostream &operator<<(std::ostream &os, ZIP_TRANSFORMS c) { return os << static_cast<int>(c); }
+
+typedef enum ZIP_ALGO_BUNDLE_MEMBER : UC {
+  ZIP_ALGO_BUNDLE_NONE_UNSPECIFIED_AUTODETECT_HEURISTIC = 0, 
+  ZIP_ALGO_BUNDLE_IDENTITY                              = 1,
+  ZIP_ALGO_BUNDLE_LZ4                                   = 2,
+  ZIP_ALGO_BUNDLE_ZSTD                                  = 3,
+} ZIP_ALGO_BUNDLE; 
+inline std::ostream &operator<<(std::ostream &os, ZIP_ALGO_BUNDLE c) { return os << static_cast<int>(c); }
+
 typedef enum HASH_METHOD_MEMBER : UC {
   HASH_METHOD_UNSPECIFIED = 0,
 } HASH_METHOD; 
-inline std::ostream &operator<<(std::ostream &os, HASH_METHOD_MEMBER c) { return os << static_cast<int>(c); }
-
-
+inline std::ostream &operator<<(std::ostream &os, HASH_METHOD c) { return os << static_cast<int>(c); }
 
 
 }

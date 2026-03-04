@@ -480,7 +480,8 @@ struct PARSER
           SLOP c = v;
           c.amend_one(+TOKEN_KIND, +TOKEN_GROUP_LAMBDA_ARGS);
           c.amend_one(+TOKEN_KIND_STRING, "lambda args rename");
-          list.amend_one(0, c);
+          // in kerf2 we don't need this because `c` is a reference to the first item and we amend in place. this solved a bug. i'm not sure why it double freed since it should've handled the references correctly in `amend_one` (increment then decrement, or avoid by detecting equality of self)?
+          // list.amend_one(0, c);
         }
       }
     }

@@ -109,7 +109,7 @@ void SLOP::cow() // coerce cowed
 
   if(presented()->allow_to_copy())
   {
-    this->coerce_to_copy_in_ram(true);
+    this->coerce_to_copy_in_ram_heap(true);
   }
   else
   {
@@ -120,12 +120,12 @@ void SLOP::cow() // coerce cowed
   }
 }
 
-void SLOP::coerce_to_copy_in_ram(bool reference_increment_children)
+void SLOP::coerce_to_copy_in_ram_heap(bool reference_increment_children)
 {
   assert(presented()->allow_to_copy());
   assert((!is_tracking_parent_rlink_of_slab()) && (!is_tracking_parent_slabm_of_slab())); // I'm not sure what this is for. figure it out. // NB. Laughably, sadly, probably what we should do is fork this method into two separate nearly identically ones (dropping this parent tracker line) so that we can go ahead and use similar stuff where we know it's safe. I can't prove yet that this "old" function isn't blocking some disallowed application of copy (say in iterators or what not). Possibly even this line was added by an entire line paste typo, things like that happened around that time. Answer. Well, one use of it is in legit_reference_increment, when you cow you want the parent to stay fixed. The o̶n̶l̶y̶ other use of it (c03rc3_parented) says we can obviate it. So this problem is not as deep as previously thought. There is a use also in cow(). I'm not so sure I understand this now, but it seems related to being parented and cow(). It may be best to just fork it. Question. I think the problem is maybe, you're copying C to RAM, if C is in RAM you should be OK (and we can return here? having met the coerce requirement?), if not, why is it parent_tracking? (Question. were we allow to parent track a TRANSIENT thing? or only PARENTED arenas??) Alternatively, perhaps the issue is, if we copy this to RAM, we need to update the parent pointer, but we can't guarantee the parent is refcount==1 without having the origin pointer for the parent, which we don't have? Remark. This function is pretty weird anyway because it does a force_copy but never checks whether it needs to, yet it's called "coerce"...i guess the coerce part is the "copy".
 
-  SLAB *new_slab = force_copy_slab_to_ram(reference_increment_children, false);
+  SLAB *new_slab = force_copy_slab_to_ram_heap(reference_increment_children, false);
   assert(this->slabp != new_slab);
 
   bool decrement_subelements = false;
@@ -134,7 +134,7 @@ void SLOP::coerce_to_copy_in_ram(bool reference_increment_children)
   {
     // reference_increment_children = false; // shouldn't need to increment 
     if(reference_increment_children) decrement_subelements = true;
-    // Note. Not incrementing above should be equivalent to decrementing below [in c03rc3_to_copy_in_ram]
+    // Note. Not incrementing above should be equivalent to decrementing below [in c03rc3_to_copy_in_ram_heap]
   }
 
   this->release_slab_and_replace_with(new_slab, decrement_subelements, true); // true==check for layout change, while goofy TAPE_HEAD stuff in force_copy
@@ -142,6 +142,16 @@ void SLOP::coerce_to_copy_in_ram(bool reference_increment_children)
 
 void SLOP::legit_reference_increment(bool copy_on_overflow)
 {
+
+  // TODO. pretty sure this needs to use the following three functions once they're atomic (+ see other legit_ function)
+  // TODO. grep source for r_slab_reference_count and fix references, there are more
+  // TODO. overflow not being handled correctly. should detect max
+  // layout()->header_get_slab_reference_count()      
+  // layout()->header_decrement_slab_reference_count()
+  // layout()->header_increment_slab_reference_count()
+  // kerr() << "BITFIELD_WIDTH(SLAB, r_slab_reference_count): " << (BITFIELD_WIDTH(SLAB, r_slab_reference_count)) << "\n";
+  // #define MAX_REFERENCE_COUNT or somesuch (1LL << BITFIELD_WIDTH(SLAB, r_slab_reference_count)) - 1
+
   UI old = this->slabp->r_slab_reference_count;
   this->slabp->r_slab_reference_count++;
 
@@ -155,7 +165,7 @@ void SLOP::legit_reference_increment(bool copy_on_overflow)
 
     if(copy_on_overflow && presented()->allow_to_copy())
     {
-      this->coerce_to_copy_in_ram(true); // copy on overflow and assign
+      this->coerce_to_copy_in_ram_heap(true); // copy on overflow and assign
     }
     else
     {
@@ -211,7 +221,7 @@ void SLOP::legit_reference_decrement(bool decrement_subelements_on_free) const n
           }
           [[fallthrough]];
         case CHUNK_TYPE_RLINK3:
-          this->layout_link_parents_lose_references();
+          this->layout_link_parenteds_lose_references();
           break;
         default:
           break;
@@ -232,13 +242,13 @@ void SLOP::legit_reference_decrement(bool decrement_subelements_on_free) const n
   }
 }
 
-void SLOP::layout_link_parents_gain_references()
+void SLOP::layout_link_parenteds_gain_references()
 {
-  auto g = [&](SLOP x) { x.parent_gain_reference(); };
+  auto g = [&](SLOP x) { x.parented_gain_reference(); };
   this->iterator_uniplex_layout_subslop(g, nullptr, false, false);
 }
 
-void SLOP::layout_link_parents_lose_references() const
+void SLOP::layout_link_parenteds_lose_references() const
 {
   // Question. maybe this is better if it goes somewhere else, like PRESENTED?
 
@@ -264,14 +274,15 @@ void SLOP::layout_link_parents_lose_references() const
       reverse = true;
       break;
     default:
+      return; // sic. This needs to be a return and not break so you don't attempt to free "parented" inside of say a vector of char
       break;
   }
 
-  auto g = [&](const SLOP& x) { x.parent_lose_reference(true); };
+  auto g = [&](const SLOP& x) { x.parented_lose_reference(true); };
   this->iterator_uniplex_layout_subslop(g, nullptr, reverse, false);
 }
 
-SLAB* SLOP::force_copy_slab_to_ram(bool reference_increment_children, bool preserve_tape_heads_literal)
+SLAB* SLOP::force_copy_slab_to_ram_heap(bool reference_increment_children, bool preserve_tape_heads_literal)
 {
   // Compare FILE_OPERATIONS::write_to_drive_path_header_payload
   assert(presented()->allow_to_copy());
@@ -337,7 +348,7 @@ SLAB* SLOP::force_copy_slab_to_ram(bool reference_increment_children, bool prese
 
   if(reference_increment_children)
   {
-    layout_link_parents_gain_references();
+    layout_link_parenteds_gain_references();
   }
 
   return dest;
@@ -352,8 +363,8 @@ void SLOP::coerce_parented(bool reference_increment_children)
   switch(this->slabp->reference_management_arena)
   {
     case REFERENCE_MANAGEMENT_ARENA_UNMANAGED_TRANSIENT:
-      // P_O_P: as of writing, we could instead do only force_copy_slab_to_ram here (we had it like that before refactoring. it had enough guarantees at this line ). we have it this way for semantics.
-      this->coerce_to_copy_in_ram(reference_increment_children);
+      // P_O_P: as of writing, we could instead do only force_copy_slab_to_ram_heap here (we had it like that before refactoring. it had enough guarantees at this line ). we have it this way for semantics.
+      this->coerce_to_copy_in_ram_heap(reference_increment_children);
       [[fallthrough]];
     case REFERENCE_MANAGEMENT_ARENA_KERFVM_WORKSTACK:
       [[fallthrough]];
@@ -497,7 +508,7 @@ void SLOP::coerce_parented(bool reference_increment_children)
 
 }
 
-void SLOP::parent_gain_reference()
+void SLOP::parented_gain_reference()
 {
   SLAB* s = this->slabp;
 
@@ -512,7 +523,7 @@ void SLOP::parent_gain_reference()
     case REFERENCE_MANAGEMENT_ARENA_UNMANAGED_TRANSIENT:
       // This I suppose is possible if we're SLAB4_ARRAY, not truly, but we can exploit it when iterating over their elements in reverse  
       // Remark. What's going to happen is the inline TRANSIENT RLINK3_UNITs get ignored, because the indexing SLOP skips them and goes right to the slab in question. So in this `case` right here, you really don't want to do anything.
-      // this->layout_link_parents_gain_references(); // Question. RLINK3_ARRAY needs this for auto memory???
+      // this->layout_link_parenteds_gain_references(); // Question. RLINK3_ARRAY needs this for auto memory???
       // Question. If this is an MMAP sub-element, viz. the DRIVE attribute is set, should we RE-MMAP a new map here (preferred), or do a RAM copy, or ... ?
       break;
     case REFERENCE_MANAGEMENT_ARENA_TREE_OR_PARENTED:
@@ -521,7 +532,7 @@ void SLOP::parent_gain_reference()
   }
 }
 
-void SLOP::parent_lose_reference(bool decrement_subelements_on_free) const
+void SLOP::parented_lose_reference(bool decrement_subelements_on_free) const
 {
   switch(this->layout()->header_get_memory_reference_management_arena())
   {
@@ -535,7 +546,7 @@ void SLOP::parent_lose_reference(bool decrement_subelements_on_free) const
       // This I suppose is possible if we're SLAB4_ARRAY, not truly, but we can exploit it when iterating over their elements in reverse  
       // Remark. What's going to happen is the inline TRANSIENT RLINK3_UNITs get ignored, because the indexing SLOP skips them and goes right to the slab in question. So in this `case` right here, you really don't want to do anything.
       // Idea. Also, this sort of thing is nice to have if we point RLINK3s at a disk array that we're managing elsewhere (say we do a version of MEMORY_MAPPED in a way that one of the layout elements is a dummy pointer to an mmapped disk vector (it gets freed last), then after that is a PREFERRED_MIXED_ARRAY with links to the disk's long sub-slabs. If those are marked TRANSIENT, then this scheme works.)
-      // this->layout_link_parents_lose_references(); // Question. RLINK3_ARRAY needs this for auto memory???
+      // this->layout_link_parenteds_lose_references(); // Question. RLINK3_ARRAY needs this for auto memory???
       break;
     case REFERENCE_MANAGEMENT_ARENA_TREE_OR_PARENTED:
       assert(this->layout()->header_get_slab_reference_count() >= 1);
@@ -608,7 +619,7 @@ void SLOP::slop_lose_reference(bool decrement_subelements_on_free) noexcept
           case CHUNK_TYPE_RLINK3:
             // Warning. below test is strong evidence we should move these methods to class methods on LAYOUT
             if(this->slabp->t_slab_object_layout_type == LAYOUT_TYPE_TAPE_HEAD_UNCOUNTED_ATOM) break;
-            if(decrement_subelements_on_free) this->layout_link_parents_lose_references();
+            if(decrement_subelements_on_free) this->layout_link_parenteds_lose_references();
             break;
           default:
             break;
@@ -777,9 +788,9 @@ void SLOP::release_slab_and_replace_with(SLAB* s, bool decrement_subelements_on_
       {
         assert(old->reference_management_arena == REFERENCE_MANAGEMENT_ARENA_TREE_OR_PARENTED);
 
-        parent_lose_reference(decrement_subelements_on_free);
+        parented_lose_reference(decrement_subelements_on_free);
         this->slabp = replacement; // slop_gain_reference(s);
-        parent_gain_reference();
+        parented_gain_reference();
 
         SLAB** spp = (SLAB**)auto_slab()->a;
         *spp = replacement;
@@ -796,7 +807,7 @@ void SLOP::release_slab_and_replace_with(SLAB* s, bool decrement_subelements_on_
         assert(old->reference_management_arena == REFERENCE_MANAGEMENT_ARENA_UNMANAGED_TRANSIENT);
 
         this->slabp = replacement; // slop_gain_reference(s);
-        parent_gain_reference();
+        parented_gain_reference();
 
         *old = SLAB::good_rlink_slab(replacement);
 
@@ -821,6 +832,18 @@ void SLOP::release_slab_and_replace_with(SLAB* s, bool decrement_subelements_on_
   // {
     reconstitute_vtables();
   // }
+}
+
+void SLOP::decrement_tracking_memory_mapped_write_counter()
+{
+  // We use this pattern and not `literal_memory_mapped_from_tracked` because we don't want to reference increment it
+  SLOP s(NIL_UNIT);
+  SLAB* sp = this->auto_slab()->a;
+  s.slabp = sp; // assign the literal MEMORY_MAPPED slab pointer
+  s.reconstitute_vtables(); // prepare it to maybe free itself
+  auto& m = *(A_MEMORY_MAPPED*)s.presented();
+  I r = m.decrement_redundant_write_lock_counter();
+  if(0==r)SUTEX::sutex_unlock_exclusive(&sp->sutex);
 }
 
 #pragma mark - 

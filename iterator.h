@@ -38,6 +38,15 @@ struct ITERATOR_LAYOUT
   {
     // NB. 2021.09.18 This method seemed necessary to solve some bug where the iterator slop was still looking at a freed SLAB and messing with it. I dunno if this is the only or the right way to do it but it worked.
     // slop.era se_for_reuse(); // Warning: I don't think you can do this, because it's the unadulterated destructor that causes problems
+
+if(false && slop.is_tracking_memory_mapped())
+{
+  // we added this because when we get a MEMORY_MAPPED tracking slop we actually need to decrement MEMORY_MAPPED_ATTRIBUTE_REDUNDANT_SLOP_WRITE_LOCK_COUNTER that tracks how many slops in thread 
+  // Idea. Question. Is it possible that we'll want to change neutralize(false) to have this behavior built-in?
+  slop.neutralize(true);
+  return;
+}
+
     slop.neutralize();
   }
 

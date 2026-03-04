@@ -1,0 +1,7 @@
+a.out
+a.out.dSYM/
+*.o
+.DS_Store
+cscope.out
+tags
+_drive_test/

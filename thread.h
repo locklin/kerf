@@ -21,9 +21,14 @@ public:
   decltype(&thread_start) function_to_call = &thread_start;
   void *function_data = nullptr;
 
-  pthread_t thr;
+  // I flagged these as _Atomic because otherwise the address sanitizer doesn't pass even though they use pauses correctly to the extent that can be correct. std::atomic is faster with release/acquire but this isn't a hot path so it doesn't matter perf wise at all. or use __atomic_load family? or tell san to ignore it all...
+  _Atomic pthread_t late_thread_id = NULL_PTHREAD_T; // may receive thread id sometime after thread has started
+  _Atomic pthread_t *late_thread_id_pointer_for_passing = nullptr;
   pthread_attr_t attr;
   I normalized_id = -1;
+
+  I checkpointA = 0;
+  I checkpointB = 0;
 
   decltype(PTHREAD_CREATE_JOINABLE) detach_state = PTHREAD_CREATE_DETACHED;
   decltype(PTHREAD_SCOPE_PROCESS) scope = PTHREAD_SCOPE_SYSTEM;
@@ -96,13 +101,15 @@ struct THREAD_POOL : REGISTERED_FOR_LONGJMP_WORKSTACK
       {
         auto j = std::move(pool->jobs.front());
         pool->jobs.pop_front();
-        __sync_fetch_and_add(&pool->active_job_count, 1);
+        // __sync_fetch_and_add(&pool->active_job_count, 1);
+        __atomic_fetch_add(&pool->active_job_count, 1, __ATOMIC_RELAXED);
         pool->mutex.unlock();
         j();
 
         // this second lock is entirely to prevent a race condition for the `.wait()` functionality
         pool->mutex.lock_safe_wrapper([&]{ // this obviates __sync here
-          __sync_fetch_and_sub(&pool->active_job_count, 1);
+          // __sync_fetch_and_sub(&pool->active_job_count, 1);
+          __atomic_fetch_sub(&pool->active_job_count, 1, __ATOMIC_RELAXED);
           s = pthread_cond_signal(&pool->inactivity);
         });
 
@@ -239,14 +246,20 @@ struct THREAD_POOL : REGISTERED_FOR_LONGJMP_WORKSTACK
 
 #else
 
+// 2022.06.14 kevin: if we're using std::future, we can't (shouldn't) compile with -fno-exceptions, since std::future may throw an exception when its thread is pthread killed/exited (say via ctrl-c), crashing the app
+// POP reenable -fno-exceptions 
+#ifndef __cpp_exceptions
+  static_assert(false, "std::future can throw on ctrl-c so is not compatible with -fno-exceptions");
+#endif
+
   // This enables:
   // auto result = pool.add([]{return 22;});
   // auto rg = result.get();
 
   template<typename F, class... Args> 
-  auto add(F f, Args&&... args) -> std::future<typename std::result_of<F(Args...)>::type>
+  auto add(F f, Args&&... args) -> std::future<typename std::invoke_result<F, Args...>::type>
   {
-    using return_type = typename std::result_of<F(Args...)>::type;
+    using return_type = typename std::invoke_result<F, Args...>::type;
 
     auto job = std::make_shared< std::packaged_task<return_type()> >(
       std::bind(std::forward<F>(f), std::forward<Args>(args)...)

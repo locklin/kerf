@@ -79,7 +79,7 @@ struct SLAB
          // NB. We can either have a lookup table that we index with t_slab_object_layout type for starting position of payload, or virtual functions on some class, or we can have a separate attribute bitfield (maybe of size :1 or :2 or :3) which is a simple count of how large the header is, maybe in terms of sizeof(int64_t) units.
          // How about slab_object_layout_type: atom (PAYLOAD), vector (COUNT+flexarray), strips ie 3rd-4th-level-attribute-user/bundled-link-thing as in ZIPS, HASHES, &such (ATTRIBUTES + flexarray). Specifying does it even HAVE attributes or reference counting, etc, which can free up more struct space. The final value should always be reserved, an escape that says look further in for more options (a la unicode escapes). | We've updated these now and this description should be changed
 
-         // Remark. There's a couple ways to expand the r_slab_reference_count bits. Take them from unused memory attributes, take them from the reserved byte a̶f̶t̶e̶r̶ ̶p̶r̶e̶s̶e̶n̶t̶e̶d̶_̶t̶y̶p̶e̶ with extra presented/layout attributes, take them from the other bits in vector that are also not used by anything else. None of this is going to give us 32 or 64 bits, I don't think. | There is another major way which is to create a new t_slab_object_layout_type which munges say m_memory_expansion_size (if unused) into its neighbor r_slab_reference_count, as in the case of drive files. You could also just do this on existing layout types without adding a new one, possibly, if you can verify/hack in its correctness.
+         // Remark. There's a couple ways to expand the r_slab_reference_count bits. Take them from unused memory attributes, take them from the reserved byte a̶f̶t̶e̶r̶ ̶p̶r̶e̶s̶e̶n̶t̶e̶d̶_̶t̶y̶p̶e̶ with extra presented/layout attributes, take them from the other bits in vector that are also not used by anything else. None of this is going to give us 32 or 64 bits, I don't think. (You don't get 32-bits of refcount in the rear if you assume 8-bits of smallcount and then the current in-use 5-6 bits of vector/list attributes, which gives 13-14, which would leave 18 in the first four bytes, but 18 doesn't let us store 7-8 bits of presented_type with 12 bits of t_layout/arena/m_memory. you might get something but you'd have to lock in pretty low with no room for expansion (full commitment and maybe some swapping first). -- seems untenable, better to chip at refcount bits for other uses) | There is another major way which is to create a new t_slab_object_layout_type which munges say m_memory_expansion_size (if unused) into its neighbor r_slab_reference_count, as in the case of drive files. You could also just do this on existing layout types without adding a new one, possibly, if you can verify/hack in its correctness.
          // Idea. Expanding reference counts to large widths. There may be some creative ways around such things [bit limitations], however, such as creating a special memory arena that persists objects for longer durations, permanently, or otherwise somehow offloads the burden of maintaining a large reference count from the typical individual highly-packed vectors. You could, for instance, have a REFERENCE_MANAGEMENT_ARENA_HASHED_BIGCOUNT, then SOMETHING like the following (fix the broken parts, like maybe the add'l reference needed as a key), globally [or per-thread, or thread-safely] store the o̶b̶j̶e̶c̶t̶s̶ slab-pointers as `keys`, the `values` as the 64-bit int reference counts (a hashbag or std-cpp-map), when the count hits zero the object can be freed. Maybe we do this anyway when a refcount overflows at reference_increment time. 
 
          // Remark. the all-zeroes 16byte should be something sensible or as close to it as possible, eg, a null atom or an untyped empty list
@@ -88,11 +88,11 @@ struct SLAB
           
          union {
            struct {
-              UC                 t_slab_object_layout_type:4;
+              UC                 t_slab_object_layout_type:4; 
 REFERENCE_MANAGEMENT_ARENA_TYPE reference_management_arena:2;
               UC                   m_memory_expansion_size:6;
               // UC               a_memory_attribute_reserved:3;
-              // UC                    r_slab_reference_count:4;
+              // UC                    r_slab_reference_count:4;   
               PRESENTED_TYPE presented_type:7; // was resolved_type. // 2021.11.22 I see, we'd rather have presented_type in the first_four bytes of slab because then if we ever make an 8-byte=4+4 (instead of 16-byte=8+8) atom/unit then it doesn't break all of the code that depends on that [and then hope we never bother with 4-byte=2+2 atoms or less]. The natural piece to move to the second_four is the sutex. There is not a good reason to keep the sutex up front except that it's memory-relevant. [Even then, you'd still need guaranteed placement *and* 1-byte width for PRESENTED_TYPE in any smaller layout types, similar to guaranteed placement and width for `t_slab_object_layout_type` at the front]
            } __attribute__ ((packed));
            // You can add say UI filler:13 or corresponding UC here but you need to pack this part of the struct
@@ -224,16 +224,16 @@ REFERENCE_MANAGEMENT_ARENA_TYPE reference_management_arena:2;
                          // C    container_width_current:7; // widths are all pow2(.) bytes
                          // Idea. this `newly_reserved` could be `presented_attribute_flags` for every layout type (atoms, tape_head, ...)
                          // UC                 newly_reserved:8; // mutex? one thing we can do with this, if we're not using it, is give it all back to reference_count. has the benefit of pushing presented_type farther out of the memory header
-                         union{C regular_vector_reserved_3:8;UC smallcount_vector_byte_count;};
                          CAPPED_WIDTH_TYPE vector_container_width_cap_type:3; // cap for varint/varfloat, with unbounded [2^3, 2^2, 2^1, 2^0, unbounded, ?, ?, ?]
                          // UC    container_width_current:4; // widths are all pow2(.) bytes. bigger t/ cap for say bigintvec - freed: chunk in PRESENTED
                          UC                bigint_sign:1; // NB. only necessary for true bitvectors (charvectors) holding BIGINT, never for references to BIGINT (why do we need this? existing 3rd party library calls maybe? yes, if you like. whenever we rehydrate: still have to store sign in dehydrated value...annoying)
                          // UC           attribute_filled:1; // has its own LAYOUT now
                          // UC optional_vector_bit_offset_count:3; // Useful if we ever do BIT ops on top of the standard ints. Char counter will be "1" (length: 1 byte vector), then either 1+(0-7) bits forward representing bits from front or  0+(0-7) bits back (negative) represent the offset of bits from the end of the bytespace. (If 0 bits, then 0 char counter.) This makes it play with our existing infra. | 2021.08.06 we resolved not to do bitops in kerf2, some time before this date.
                          // UC            more_newly_reserved:4;
-                         UC             attribute_reserved_1:2; // attr_REJECT_PROMOTE_TO_MIXED_PROMOTE_TO_FLOAT_PROMOTE_TO_BIGINT, or add'l cap type
                          UC       attribute_known_sorted_asc:1; // Idea. both true [asc/desc] => ???, all same/`take`
                          UC      attribute_known_sorted_desc:1; // POP. Neither of these attributes are necessary, truly, for smallcount. So you could keep them where that is stored instead.
+                         UC             attribute_reserved_1:2; // attr_REJECT_PROMOTE_TO_MIXED_PROMOTE_TO_FLOAT_PROMOTE_TO_BIGINT, or add'l cap type
+                         union{C regular_vector_reserved_3:8;UC smallcount_vector_byte_count;};
                   };
 
 
@@ -241,14 +241,14 @@ REFERENCE_MANAGEMENT_ARENA_TYPE reference_management_arena:2;
                   struct{
                          // UC list_reserved_0:8;
                          // UC list_reserved_2:8;
-                         union{C regular_list_reserved_1:8;UC smallcount_list_byte_count;}; // should keep same position as smallcount_vector_byte_count (assert is in test.cc)
-                         UC list_attribute_reserved_3:2;
                          UC attribute_zero_if_allows_append_amend_to_break_all_same_stride_width:1;
                          UC attribute_zero_if_known_children_at_every_depth_are_RLINK3_free:1; // aka FLAT LIST. Rule: If zero: Always flatten rhs on amend/append. If one: always add RLINK (equiv to "always add slab4-width item"). Also, provide force-to-one method at least at creation time (if later, potentially wants to rewrite list to fit format). Rule: Defaults to zero
                          UC attribute_zero_if_known_that_top_level_items_all_same_stride_width:1; // for O(1) indexing - hooks for toggle at append and amend. Alt: attr_zero_if_known_even_stride // JUMP_LIST doesn't need this and could overload to be "ragged append on jumplist untracked by intvec"
                          UC attribute_zero_if_jump_list_is_complete_and_no_untracked_terms:1;
                          UC       LIST_HOLDER_attribute_known_sorted_asc:1;
                          UC      LIST_HOLDER_attribute_known_sorted_desc:1;
+                         UC list_attribute_reserved_3:2;
+                         union{C regular_list_reserved_1:8;UC smallcount_list_byte_count;}; // should keep same position as smallcount_vector_byte_count (assert is in test.cc)
 
                          // Observation: Old SLAB4 is just 1. even strides 2. has_RLINK3
                          // Remark: even strides don't need a JUMP_LIST
@@ -260,8 +260,8 @@ REFERENCE_MANAGEMENT_ARENA_TYPE reference_management_arena:2;
 
                  };
 
-                 struct{
-
+                 struct{ 
+                    
                     // union{
                     //   UC layout_and_presented_reserved_byte:8;
                     //   struct {
@@ -270,7 +270,7 @@ REFERENCE_MANAGEMENT_ARENA_TYPE reference_management_arena:2;
                     //   };
                     // };
 
-
+                    // NB. If you start shaving bits off refcount for attributes, look for mentions in source of third_two which is where you'll need to touch up transferring data between slabs
                     uint16_t r_slab_reference_count;
                  };
 
@@ -334,7 +334,7 @@ REFERENCE_MANAGEMENT_ARENA_TYPE reference_management_arena:2;
 
   static SLAB slab4_transient_with_good_first_four() { return (SLAB){
                                                          .t_slab_object_layout_type = 0,
-                                                         .m_memory_expansion_size = LOG_SLAB_WIDTH, // Remark. Had we done this as (m-3), or special-cased `0`, we'd get all 0's here...
+                                                         .m_memory_expansion_size = LOG_SLAB_WIDTH, // Remark. Had we done this as (m-3), or special-cased `0`, we'd get all 0's here... Maybe we should fix this before permanently setting it in stone, it's not a lot to replace, grep m_memory_expansion_size. will we ever use M<3 ? potentially i guess... with new layout types.
                                                          .reference_management_arena = REFERENCE_MANAGEMENT_ARENA_UNMANAGED_TRANSIENT, // "0"
                                                          .r_slab_reference_count = 0, 
                                                          // .sutex = {.counter = 0, .writer_waiting = 0},

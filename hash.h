@@ -15,6 +15,8 @@ namespace KERF_NAMESPACE
 // xxhash satisfies these requirements, fasthash does not b/c author won't provide 128-bit
 // Remark. 64 bit hash is fine
 
+// Remark. We want versioned hashtables, but note that this requires version comparison [between two hashtables/hashsets] (and potentially recalculating everything on mismatch) if we do so
+
 // Idea. We can use 64-bit hashes until the hashmap reaches a certain size [in terms of # keys], then use 128-bit. Idea. Also, you can cheat on small keys and use a reduced hash length (64-bit or 32-bit or shorter even) and upsample it to 128-bit, without appreciably increasing collisions (because there aren't many small keys, they take up a negligible part of the space). (This would matter for something like cityhash which isn't tuned for small keys.) So you can cheat on 1. #keys 2. size of keys
 
 
@@ -47,7 +49,7 @@ namespace KERF_NAMESPACE
 
 HASH_CPP_TYPE The_Hash_Key;
 
-uint64_t fasthash64(const void *buf, size_t len, uint64_t seed);
+uint64_t fasthash64(const void *buf, size_t len, uint64_t seed); // Feature. Add wyhash https://github.com/wangyi-fudan/wyhash
 void hash_init();
 
 HASH_CPP_TYPE hash_byte_stream(HASH_METHOD_MEMBER method, const void *in, uint64_t length, HASH_CPP_TYPE seed);

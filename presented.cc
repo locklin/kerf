@@ -68,8 +68,11 @@ std::string PRESENTED_BASE::string_for_char(C c, C quote_char, bool less)
 
   switch(c)
   {
-    case '"'  : [[fallthrough]];
-    case '/'  :  // json escapes forward slashes
+    case '"'  :
+#if JSON_PRINT_ESCAPED_FORWARD_SLASH
+      [[fallthrough]];
+    case '/'  :  // json escape forward slashes
+#endif
                 if(less) return std::string(1,c);
                 [[fallthrough]];
     case '\\' : return "\\" + std::string(1,c);
@@ -228,7 +231,7 @@ std::string A_CHAR0_ARRAY::to_string()
 {
   std::string s = CHAR_ARRAY_QUOTE_FRONT;
   
-  DO(layout()->payload_used_chunk_count(), s += string_for_char(layout()->slop_from_unitized_layout_chunk_index(i).presented()->I_cast(),*(char*)CHAR_ARRAY_QUOTE_ESCAPE_QUOTE);)
+  DO(layout()->payload_used_chunk_count(), s += string_for_char(layout()->slop_from_unitized_layout_chunk_index(i).presented()->I_cast(),*(char*)CHAR_ARRAY_QUOTE_ESCAPE_QUOTE, true);)
 
   s += CHAR_ARRAY_QUOTE_BACK;
 
@@ -239,7 +242,7 @@ std::string A_STRING_UNIT::to_string()
 {
   std::string s = STRING_QUOTE_FRONT;
   
-  DO(layout()->payload_used_chunk_count(), s += string_for_char(layout()->slop_from_unitized_layout_chunk_index(i).presented()->I_cast(),*(char*)STRING_QUOTE_ESCAPE_QUOTE);)
+  DO(layout()->payload_used_chunk_count(), s += string_for_char(layout()->slop_from_unitized_layout_chunk_index(i).presented()->I_cast(),*(char*)STRING_QUOTE_ESCAPE_QUOTE, true);)
 
   s += STRING_QUOTE_BACK;
 
@@ -565,12 +568,14 @@ void A_MAP_UPG_UPG::cow_amend_one(const SLOP& x, const SLOP& y)
 void A_MAP_UPG_UPG::cow_upgrade_to_attribute_map()
 {
   parent()->cow();
-
   auto value_index = layout_index_of_grouped_values();
   auto key_index = layout_index_of_grouped_keys();
 
+  auto k = keys();
+
   layout()->cow_append(values());
-  layout()->cow_amend_one(value_index, keys());
+  layout()->cow_amend_one(value_index, k);
+  k.neutralize(); // NB. This solved a bug where we had keys() called kind of wildly (as an rvalue) inside of the above amend where it disappeared internally but the rvalue slop didn't free until after.
   layout()->cow_amend_one(key_index, MAP_UPG_UPG); 
   parent()->cowed_rewrite_presented_type(MAP_YES_UPG);
 }
@@ -602,7 +607,9 @@ void A_MAP_YES_UPG::cow_upgrade_to_index_map()
   auto key_index = layout_index_of_grouped_keys();
 
   layout()->cow_append(values());
-  layout()->cow_amend_one(value_index, keys());
+  auto k = keys();
+  layout()->cow_amend_one(value_index, k);
+  k.neutralize(); // see other comment
   layout()->cow_amend_one(key_index, INT0_ARRAY); 
   parent()->cowed_rewrite_presented_type(MAP_YES_YES);
 }
@@ -776,6 +783,7 @@ SLOP A_MEMORY_MAPPED::get_attribute(MEMORY_MAPPED_ATTRIBUTE a)
 
 void A_MEMORY_MAPPED::cow_set_attribute(MEMORY_MAPPED_ATTRIBUTE a, const SLOP& x)
 {
+  // parent()->cow(); // this wasn't in A_MEMORY_MAPPED until I started working on ZIP_ARRAY, and then turning it on caused an error in drive tests, so it was either specifically disallowed or never needed (I think one of those is the case), or we need to solve tests 
   SLOP m = grouped_metadata();
   m.cow();
   m.presented()->cowed_insert_replace((I)a, x);
@@ -1108,21 +1116,22 @@ begin:
 void A_MEMORY_MAPPED::dealloc_pre_subelt() noexcept
 {
   assert(8==sizeof(*this));
+
   SLOP path = get_path(); 
 
   // Observation. If ~SLOP isn't in a critical section, there's no guarantee this is called. You could create a PRESENTED method that fires inside of ~SLOP before the SLOP's cpp workstack deregister, and munmaps things, much like dealloc_pre_subelt kind of does, but this won't get around the problem of leaking the path in The_File_Registry. Ctrl-c is going to leak things from time to time and you should accept that. It's one of our assumptions. (The alternative is to wrap the whole codebase in critical wrappers, and even then some will slip through).
 
   bool expanded = (bool)get_attribute(MEMORY_MAPPED_ATTRIBUTE_RLINK_EXPANDED_INITIALIZED);
-
-  auto s = get_good_slop();
+  
+  auto s = get_good_slop(); // Warning: logging (printing) this caused problems (I think from nulling out pointer on writing to drive)
   auto p = s.presented();
   bool flat = p->layout()->known_flat();
 
   if(expanded && !flat)
   {
     assert(!get_is_headerless()); // if we can reach here with this somehow, we need to catch it up higher 
-    p->parent()->layout_link_parents_lose_references();
-    // Feature. zero_pointers [aka don't leave random memory addresses on the drive. this is not necessary but has some benefits as an option]. You can maybe edit `layout_link_parents_lose_references` to have this option with some work. Changing the FILE_OPERATIONS ones is also tricky: the path based one needs the lock, which you won't have, and the deeper SLOP based one assumes the iteration still has live pointers (we either don't here because of layout_link_parents_lose*, or we'd need to free them as part of that [modified] FILE_OPERATIONS::zero_pointers function). Anyway, I'm skipping this for now.
+    p->parent()->layout_link_parenteds_lose_references();
+    // Feature. zero_pointers [aka don't leave random memory addresses on the drive. this is not necessary but has some benefits as an option]. You can maybe edit `layout_link_parenteds_lose_references` to have this option with some work. Changing the FILE_OPERATIONS ones is also tricky: the path based one needs the lock, which you won't have, and the deeper SLOP based one assumes the iteration still has live pointers (we either don't here because of layout_link_parents_lose*, or we'd need to free them as part of that [modified] FILE_OPERATIONS::zero_pointers function). Anyway, I'm skipping this for now.
   }
   s.neutralize(true);
 
@@ -1130,6 +1139,14 @@ void A_MEMORY_MAPPED::dealloc_pre_subelt() noexcept
     safe_good_maybe_munmap(false);
     if(path != "") The_File_Registry.deregister_path_use(path);
   }
+
+  if(DEBUG)
+  {
+    auto attr = A_MEMORY_MAPPED::MEMORY_MAPPED_ATTRIBUTE_REDUNDANT_SLOP_WRITE_LOCK_COUNTER;
+    auto r = (I)get_attribute(attr);
+    assert(r==0);
+  }
+
 };
 
 #pragma mark - Wrapper Passthroughs
@@ -1171,6 +1188,51 @@ void A_MEMORY_MAPPED::dealloc_pre_subelt() noexcept
 //     return p->F_cast();
 //   });
 // }
+#pragma mark - Zip Array
+
+SLOP A_ZIP_ARRAY::get_attribute(ZIP_ATTRIBUTE a)
+{
+  return grouped_metadata()[(I)a];
+}
+
+void A_ZIP_ARRAY::cow_set_attribute(ZIP_ATTRIBUTE a, const SLOP& x)
+{
+  parent()->cow();
+  SLOP m = grouped_metadata();
+  m.cow();
+  m.presented()->cowed_insert_replace((I)a, x);
+}
+
+void A_ZIP_ARRAY::init_default_attributes()
+{
+  cow_set_attribute(ZIP_ATTRIBUTE_KERF_FORMAT_VERSION_NUMBER, (I)ZIP_FORMAT_CURRENT_VERSION_NUMBER);
+  cow_set_attribute(ZIP_ATTRIBUTE_ALGORITHM,                  (I)ZIP_FORMAT_DEFAULT_ALGORITHM);
+  cow_set_attribute(ZIP_ATTRIBUTE_TRANSFORMS_ARRAY,           UNTYPED_ARRAY);
+  cow_set_attribute(ZIP_ATTRIBUTE_WINDOW_SIZE,                (I)ZIP_FORMAT_DEFAULT_WINDOW_BYTES);
+}
+
+void A_ZIP_ARRAY::init_for_bundle(ZIP_ALGO_BUNDLE b)
+{
+  switch(b)
+  {
+    case ZIP_ALGO_BUNDLE_IDENTITY:
+      cow_set_attribute(ZIP_ATTRIBUTE_ALGORITHM,   (I)ZIP_ALGORITHM_IDENTITY);
+      cow_set_attribute(ZIP_ATTRIBUTE_WINDOW_SIZE, (I)PAGE_SIZE_BYTES);
+      break;
+    case ZIP_ALGO_BUNDLE_LZ4:
+      cow_set_attribute(ZIP_ATTRIBUTE_ALGORITHM,   (I)ZIP_ALGORITHM_LZ4_1);
+      cow_set_attribute(ZIP_ATTRIBUTE_WINDOW_SIZE, (I)ZIP_FORMAT_DEFAULT_LZ4_WINDOW_BYTES);
+      //cow_set_attribute(ZIP_ATTRIBUTE_PROPRIETARY_POWER_FLOAT, (F)0);
+      break;
+    case ZIP_ALGO_BUNDLE_ZSTD:
+      cow_set_attribute(ZIP_ATTRIBUTE_ALGORITHM,   (I)ZIP_ALGORITHM_ZSTD_1);
+      cow_set_attribute(ZIP_ATTRIBUTE_WINDOW_SIZE, (I)ZIP_FORMAT_DEFAULT_ZSTD_WINDOW_BYTES);
+      break;
+    default:
+    case ZIP_ALGO_BUNDLE_NONE_UNSPECIFIED_AUTODETECT_HEURISTIC:
+      die(zip algo bundle not yet implemented);
+  }
+}
 
 #pragma mark -
 
@@ -1205,7 +1267,6 @@ PRESENTED_BASE * reconstitute_presented_wrapper(void *presented_vtable, PRESENTE
     case SPAN_MILLISECONDS_UNIT:   new(presented_vtable) A_SPAN_MILLISECONDS_UNIT();   break; 
     case SPAN_MICROSECONDS_UNIT:   new(presented_vtable) A_SPAN_MICROSECONDS_UNIT();   break; 
     case SPAN_NANOSECONDS_UNIT:    new(presented_vtable) A_SPAN_NANOSECONDS_UNIT();    break;  
-    case UNTYPED_ARRAY:            new(presented_vtable) A_UNTYPED_ARRAY();            break;
     case CHAR0_ARRAY:              new(presented_vtable) A_CHAR0_ARRAY();              break;
     case INT0_ARRAY:               new(presented_vtable) A_INT0_ARRAY();               break;
     case INT1_ARRAY:               new(presented_vtable) A_INT1_ARRAY();               break;
@@ -1214,6 +1275,7 @@ PRESENTED_BASE * reconstitute_presented_wrapper(void *presented_vtable, PRESENTE
     case FLOAT1_ARRAY:             new(presented_vtable) A_FLOAT1_ARRAY();             break;
     case FLOAT2_ARRAY:             new(presented_vtable) A_FLOAT2_ARRAY();             break;
     case FLOAT3_ARRAY:             new(presented_vtable) A_FLOAT3_ARRAY();             break;
+    case UNTYPED_ARRAY:            new(presented_vtable) A_UNTYPED_ARRAY();            break;
     case UNTYPED_RLINK3_ARRAY:     new(presented_vtable) A_UNTYPED_RLINK3_ARRAY();     break;
     case UNTYPED_SLAB4_ARRAY:      new(presented_vtable) A_UNTYPED_SLAB4_ARRAY();      break;
     case STAMP_DATETIME_ARRAY:     new(presented_vtable) A_STAMP_DATETIME_ARRAY();     break;

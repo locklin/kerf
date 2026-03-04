@@ -20,12 +20,12 @@ auto kerf_get_unnormalized_thread_id()
   // return *j;
 }
 
-I kerf_acquire_normalized_thread_id(bool checks_existing)
+I kerf_acquire_normalized_thread_id(bool checks_existing, bool for_someone_else)
 {
   I error = -1;
-  auto u = kerf_get_unnormalized_thread_id();
+  auto u = for_someone_else ? NULL_PTHREAD_T : kerf_get_unnormalized_thread_id();
 
-  if(checks_existing) { // optional. won't affect perf, but may obscure bugs
+  if(checks_existing) { // optional. won't affect perf, but may obscure bugs. "do we already have id?"
     I check = kerf_retrieve_acquired_normalized_thread_id_bypass_cache();
     if(error != check) {
       return check;
@@ -49,7 +49,8 @@ I kerf_acquire_normalized_thread_id(bool checks_existing)
   }
   else {
     I capture = error;
-    The_Normalized_Thread_Id_Mutex.lock_safe_wrapper([&]{ // locking actually obviates the __sync_bool_compare_and_swap below.
+    // POP This isn't hot anyway, but... I don't know if we need either the wrapper or __sync_bool/__atomic_compare, could possibly change the ACQUIRE/RELEASE/RELAXED semantics. probably pointless
+    The_Normalized_Thread_Id_Mutex.lock_safe_wrapper([&]{ // POP. locking actually obviates the __sync_bool_compare_and_swap/__atomic_compare_exchange_n below, probably __atomic_store also.
       DO(KERF_MAX_NORMALIZABLE_THREAD_COUNT, 
            // #include <stdatomic.h>
            // _Atomic(I) *existing = &The_Normalized_Thread_Id_Table[i];
@@ -60,10 +61,12 @@ I kerf_acquire_normalized_thread_id(bool checks_existing)
            // datatypes as _Atomic slowed down reads or not
 
            auto *existing = &The_Normalized_Thread_Id_Table_Bool[i];
-           auto expected = 0;
-           if(__sync_bool_compare_and_swap(existing, expected, true))
+           bool expected = false;
+           // if(__sync_bool_compare_and_swap(existing, expected, true))
+           if (__atomic_compare_exchange_n(existing, &expected, true, false, __ATOMIC_ACQ_REL, __ATOMIC_RELAXED))
            {
-             The_Normalized_Thread_Id_Table[i] = u;
+             // The_Normalized_Thread_Id_Table[i] = u;
+             __atomic_store_n(&The_Normalized_Thread_Id_Table[i], u, __ATOMIC_RELEASE);
              capture = i;
              break;
            }
@@ -80,13 +83,18 @@ I kerf_retrieve_acquired_normalized_thread_id_bypass_cache()
   // The nice thing about this is the main thread (0) requires only one comparison, the next thread 2 comparisons, and so on
   // This correctly prioritizes earlier threads over later.
   // Presumably this should all be faster than thread-local storage, std::map, and so on.
-  // POTENTIAL_OPTIMIZATION_POINT if we limit ourselves to pthreads, pthread_key_create is [I'm guessing] probably sufficient to get our O(1) fast-as-possible cache of the normalized thread id, assuming it really uses a thread-specific stack pointer
-  // POTENTIAL_OPTIMIZATION_POINT If _Thread_local and family ever get sped up, then we can trivially cache this value using them.
+  // POTENTIAL_OPTIMIZATION_POINT if we limit ourselves to pthreads, pthread_key_create is [I'm guessing] probably sufficient to get our O(1) fast-as-possible cache of the normalized thread id, assuming it really uses a thread-specific stack pointer 
+  // POTENTIAL_OPTIMIZATION_POINT If _Thread_local and family ever get sped up, then we can trivially cache this value using them. 2026.02.20 AI seems to think it's improved since back then
   // POTENTIAL_OPTIMIZATION_POINT if you intend to circumvent normalized ids, then you could probably use pthread_key to have individualized pointers [one set for each thread] to VMs and memory-pools and such, OTOH, if you want to reuse or cache or pre-initialize VMs or mempools you're still going to need a pool-of-pools solution similar to what our normalized id system provides. My guess is that "caching" the normalized thread id gives us everything that we care about (and caching itself may not even be necessary) and that the circumventing solution indicated here is a bad path.
 
   I error = -1;
   auto u = kerf_get_unnormalized_thread_id();
-  DO(KERF_MAX_NORMALIZABLE_THREAD_COUNT, if(pthread_equal(u, The_Normalized_Thread_Id_Table[i])) return i)
+  // DO(KERF_MAX_NORMALIZABLE_THREAD_COUNT, if(The_Normalized_Thread_Id_Table_Bool[i] && pthread_equal(u, The_Normalized_Thread_Id_Table[i])) return i)
+  DO(KERF_MAX_NORMALIZABLE_THREAD_COUNT, 
+    // if(pthread_equal(u, The_Normalized_Thread_Id_Table[i])) return i
+    pthread_t slot = __atomic_load_n(&The_Normalized_Thread_Id_Table[i], __ATOMIC_ACQUIRE);
+    if(pthread_equal(u, slot)) return i;
+  )
   return error;
 }
 
@@ -110,11 +118,21 @@ void kerf_release_normalized_thread_id()
   decltype(u) erase = NULL_PTHREAD_T;
 
   DO(KERF_MAX_NORMALIZABLE_THREAD_COUNT, 
-      if(pthread_equal(u, The_Normalized_Thread_Id_Table[i])) {
-        The_Normalized_Thread_Id_Table_Bool[i] = false;
-        The_Normalized_Thread_Id_Table_Joinable[i] = false;
-        The_Normalized_Thread_Id_Table[i] = erase; // this should happen last
-        return; // optional: you could continue & walk the table before the thread exits but this might obscure bugs
+
+      // if(pthread_equal(u, The_Normalized_Thread_Id_Table[i])) {
+      //   The_Normalized_Thread_Id_Table_Joinable[i] = false;
+      //   The_Normalized_Thread_Id_Table[i] = erase; // this should happen last (why? seems like it's causing a bug and that bool erase should happen last if we're using bool)
+      //   The_Normalized_Thread_Id_Table_Bool[i] = false;
+      //   return; // optional: you could continue & walk the table before the thread exits but this might obscure bugs
+      // }
+
+      pthread_t slot = __atomic_load_n(&The_Normalized_Thread_Id_Table[i], __ATOMIC_RELAXED);
+      if(pthread_equal(u, slot)) {
+          __atomic_store_n(&The_Normalized_Thread_Id_Table_Joinable[i], false, __ATOMIC_RELAXED);
+          __atomic_store_n(&The_Normalized_Thread_Id_Table[i], erase, __ATOMIC_RELEASE);
+          __atomic_store_n(&The_Normalized_Thread_Id_Table_Bool[i], false, __ATOMIC_RELEASE);
+          kerf_set_cached_normalized_thread_id(-1);
+          return; // optional: you could continue & walk the table before the thread exits but this might obscure bugs
       }
   )
 

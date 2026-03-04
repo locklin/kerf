@@ -1,6 +1,21 @@
 #pragma once
 namespace KERF_NAMESPACE {
 
+// 2026.02.20 I think this is correct but it's been a long break
+// this describes how to do real pooling (beyond always-malloc() always-free()) without "leaking" cross-thread
+// Threaded global memory model. Either
+// i. Leak: You leak via passing between thread (thread-to-thread) via the global tree non-released atomish size memory (frags accumulate and never release - they're passing in one direction from one thread's pool to another thread's pool instead of being "reused" by the originating thread, and so overflowing the lanes in the second pool). (Unless you pause the world and garbage collect - no)
+// ii. Malloc/free: You disable the pooler mostly and replace small items with malloc/free -os handles. Some perf penalty.
+// iii. Page: The minimum pool size becomes a 4096 page which is no longer subdivided for atoms: then releasing it is trivial (unmap page when thread's repository lane becomes too large, either in batch (half) or one at a time)
+// iv. Convert: Everything that hits the tree gets converted: enlarged past the pool max, in the kona terminology, or really just marked as releasable and converted so that they aren't repoolable (mapped disk objects are also releasable in addition to big in-memory lists). This sounds like a pain to track.
+// v. Use pool but small pool items are all malloc'd so you can free() lanes when you detect the lanes get too full/overflow (half in batch or one at a time, probably one at a time is better) because another thread is feeding it/it's consuming from another thread off the global-tree. No subdividing. This avoids the fragment-reassembly problem, or more accurately, hands it to the OS. It also solves the cross thread leak problem. More efficient than pages. Fails gracefully. Big items can still be automatically freed when returned.
+//
+// the best soln is v. (of the first v)
+// malloc'ing each atom will cause some bubbles because it has more overhead than inlining them on a single cache-efficient slab we manage
+// for solns which malloc() atoms, we can counter with better presented-kerf-object-types which manage atoms inside of lists better, to avoid the malloc, but the problem never truly disappears I don't think, anyway it's small and bounded
+// (in a single-threaded mode you could avoid soln v and just use the same pool strategy from kona which packs items tighter than malloc)
+
+
 I PAGE_SIZE_BYTES = sysconf(_SC_PAGE_SIZE);
 
 struct MEMORY_POOL

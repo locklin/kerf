@@ -30,6 +30,11 @@ SUTEX::SUTEX_GUARD::~SUTEX_GUARD()
 int SUTEX::sutex_lock_exclusive(SUTEX *u, const bool try_only, const I allowed_counter, const bool ignores_thread)
 {
   // POP Remark. everywhere is the question of which __ATOMIC_* attribute? Part of the difficulty in answering the question is that the C++11 atomics are designed for atomic `.load()` and `.store()` operations, say on a bool, where they make more sense. When coding a mutex (sutex), you have lock and unlock operations associated with acquiring and releasing the locks. But seemingly, because most of these operations are writes/stores, you actually will use memory_order_release (or stronger) on much of it, and not memory_order_acquire, even when "acquiring" the lock, because they are writes/stores. C++11 committee should have chosen different names. Descriptions are also bad. Use "lexical" and "temporal" ordering, and "compiler" and "CPU" ordering. I think their "release/acquire" refers to "releasing/acquiring" the hypothetical lock on mutable data.
+  //  RELAXED < CONSUME < ACQUIRE < RELEASE < ACQ_REL < SEQ_CST
+  // Observation. one minor issue with the sutex-protected threading model implementation we're going to use is that __ATOMIC_ACQUIRE and __ATOMIC_RELEASE and friends give a total data ordering for threads A and B, when generally we're just concerned with their ordering for the object data in question (the data protected by the lock, not the entire heap/stack), but we can't gate the memory at that fine a grain. 
+  // Remark. Thread A with the sutex exclusive lock on Data D cannot simply allow Thread B to write to D: Thread B must still wrap its writes in __ATOMIC_ACQUIRE and __ATOMIC_RELEASE (which can be __atomic_thread_fence but still need to be paired to a shared atomic action, probably load on the mutex), otherwise B's writes have no order or appearance guarantees with respect to observing Thread C, who must still ACQUIRE for consistency.
+  // POP. We can prob use CONSUME in 1+ places here and in the thread/id allocation process but I can't test it because compilers haven't implemented it
+
 
   I one_id;
 
@@ -71,8 +76,7 @@ set_writer_waiting_flag:
   {
     // Remark. Linux has __test_and_set_bit, x86 has test_and_set_bit
     // Take 1: old.i = __sync_fetch_and_or(&u->i, ((SUTEX){.writer_waiting=1}).i);
-    // POP what can we use that's weaker than __ATOMIC_SEQ_CST? __ATOMIC_ACQUIRE ?
-    old.i = __atomic_fetch_or(&u->i, ((SUTEX){.writer_waiting=1}).i, __ATOMIC_SEQ_CST);
+    old.i = __atomic_fetch_or(&u->i, ((SUTEX){.writer_waiting=-1}).i, __ATOMIC_RELAXED);
 
     if(old.writer_waiting)  
     {
@@ -83,7 +87,7 @@ set_writer_waiting_flag:
       b.pause();
       goto set_writer_waiting_flag;
     }
-    old.writer_waiting = 1;
+    old.writer_waiting = -1;
   }
   
   // // Take 1
@@ -108,12 +112,24 @@ wait_for_counter:
     s.counter = -one_id;
 
     //Take 2.1: before.i = __sync_val_compare_and_swap(&u->i, old.i, s.i);
-    // POP what can we use that's weaker? ? (true, __ATOMIC_ACQUIRE, __ATOMIC_RELAXED) ?
-    if(! __atomic_compare_exchange_n(&u->i, &old.i, s.i, false, __ATOMIC_SEQ_CST, __ATOMIC_SEQ_CST))
+    if(! __atomic_compare_exchange_n(&u->i, &old.i, s.i, true, __ATOMIC_ACQUIRE, __ATOMIC_RELAXED))
     {
       if(try_only)
       {
-        u->writer_waiting = 0;
+        // this is unsafe: u->writer_waiting = 0;
+        // this is invalid/unimplemented C++ currently: __atomic_store_n(&u->writer_waiting, 0, __ATOMIC_RELAXED);
+        // so do this:
+        {
+
+          static_assert(1==SUTEX_FLAG_BITS);
+          static_assert(std::is_signed_v<decltype(SUTEX::writer_waiting)>);
+          #pragma clang diagnostic push
+          #pragma clang diagnostic ignored "-Wsingle-bit-bitfield-constant-conversion"
+          static_assert(((SUTEX){.writer_waiting=1}).writer_waiting == -1);
+          #pragma clang diagnostic pop
+          __atomic_fetch_and(&u->i, ~((SUTEX){.writer_waiting=-1}).i, __ATOMIC_RELAXED);
+        }
+
         return EBUSY;
       }
 
@@ -122,8 +138,13 @@ wait_for_counter:
     }
   }
 
-  assert(u->writer_waiting);
-  assert(u->counter == s.counter); // valid test for exclusive locks, not for shared
+  if(DEBUG)
+  {
+    SUTEX temp;
+    __atomic_load(u, &temp, __ATOMIC_RELAXED);
+    assert(temp.writer_waiting);
+    assert(temp.counter == s.counter); // valid test for exclusive locks, not for shared
+  }
 
   return SUCCESS;
 }
@@ -135,36 +156,37 @@ int SUTEX::sutex_try_lock_exclusive(SUTEX *u, const bool ignores_thread)
 
 void SUTEX::sutex_unlock_exclusive(SUTEX *u, const bool ignores_thread)
 {
+
+  SUTEX temp;
+  __atomic_load(u, &temp, __ATOMIC_RELAXED);
+  // SUTEX temp = *u; // POP. I think technically this is safe even through tearing, but need to silence san
+
   if(DEBUG)
   {
     auto one_id = 1 + kerf_get_cached_normalized_thread_id();
-    assert(u->writer_waiting);
+    assert(temp.writer_waiting);
     if(!ignores_thread)
     {
-      assert(u->counter == -one_id); // valid test for exclusive locks, not for shared
+      assert(temp.counter == -one_id); // valid test for exclusive locks, not for shared
     }
     else
     {
-      assert(u->counter == -IGNORED_THREAD_PLACEHOLDER_ONE_ID); 
-
+      assert(temp.counter == -IGNORED_THREAD_PLACEHOLDER_ONE_ID); 
     }
   }
 
-  SUTEX temp = *u; 
   temp.counter = 0;
   temp.writer_waiting = 0;
-  __atomic_store_n(&u->i, temp.i, __ATOMIC_SEQ_CST);
-  // POP the other two unverified options are __ATOMIC_RELAXED and __ATOMIC_RELEASE
-  // POP these [un-atomic versions] are sufficient if the compiler/cpus respect them
-    // u->counter = 0; // counter first then flag last
-    // u->writer_waiting = 0;
+  __atomic_store_n(&u->i, temp.i, __ATOMIC_RELEASE);
 }
 
 int SUTEX::sutex_lock_shared(SUTEX *u, const bool try_only)
 { 
   BACKOFF b;
 
-  SUTEX stale = *u, renew;
+  SUTEX stale;
+  stale.i = __atomic_load_n(&u->i, __ATOMIC_RELAXED);
+  SUTEX renew;
 
 retry:
 
@@ -180,8 +202,7 @@ retry:
   // Alternatively, I think we can capture the write flag, do an atomic addition, unset write flag. This yields a different set of semantics, which may make reader-throughput more stable. What we really want is an atomic add that doesn't process if the write flag is on, that's what we're poorly simulating here with compare_and_swap.
 
   // Take 1: before.i = __sync_val_compare_and_swap(&u->i, stale.i, renew.i);
-  // POP what can we use that's weaker? ? (true, __ATOMIC_ACQUIRE, __ATOMIC_RELAXED) ?
-  if(! __atomic_compare_exchange_n(&u->i, &stale.i, renew.i, false, __ATOMIC_SEQ_CST, __ATOMIC_SEQ_CST))
+  if(! __atomic_compare_exchange_n(&u->i, &stale.i, renew.i, true, __ATOMIC_ACQUIRE, __ATOMIC_RELAXED))
   {
     bool saturated = stale.counter >= SUTEX_COUNTER_MAX;
     const bool EAGAIN_FOR_TRY = true;
@@ -225,7 +246,12 @@ void SUTEX::sutex_unlock_shared(SUTEX *u)
   // but the {.counter = 1} version works
   // possibly a platform/bit ordering issue, I only spent a few seconds
 
-  assert(u->counter > 0);
+  if(DEBUG)
+  {
+    SUTEX temp;
+    __atomic_load(u, &temp, __ATOMIC_RELAXED);
+    assert(temp.counter > 0);
+  }
 
   SUTEX was; // for debug
 
@@ -234,8 +260,8 @@ void SUTEX::sutex_unlock_shared(SUTEX *u)
   assert(subtrahend.counter == 1);
 
   // Take 1: old.i = __sync_fetch_and_sub(&u->i, subtrahend.i);
-  // POP what can we use that's weaker than __ATOMIC_SEQ_CST? __ATOMIC_RELEASE ?
-  was.i = __atomic_fetch_sub(&u->i, subtrahend.i, __ATOMIC_SEQ_CST);
+  was.i = __atomic_fetch_sub(&u->i, subtrahend.i, __ATOMIC_RELEASE);
+  // POP. Technically, if this is a reader-only lock (and no SLAB-TREE-OR-PARENTED-reference-increments took place or were themselves atomic) then this could be RELAXED.
 
   assert(was.counter > 0);
 }
@@ -248,6 +274,10 @@ int SUTEX::sutex_downgrade_lock(SUTEX *u, const bool ignores_thread)
   // the lock state (& eg allowed_counter is known 1 or stack-tracked), but I'm
   // not sure what the use of that is, having a downgrade/upgrade toggle method.
 
+  SUTEX temp;
+  __atomic_load(u, &temp, __ATOMIC_RELAXED);
+  // SUTEX temp = *u; // POP. I think technically this is safe even through tearing, but preemptively silencing san
+
   // downgrade from exclusive to shared:
   if(DEBUG)
   {
@@ -255,19 +285,14 @@ int SUTEX::sutex_downgrade_lock(SUTEX *u, const bool ignores_thread)
 
     if(!ignores_thread)
     {
-      assert(u->counter == -one_id);
+      assert(temp.counter == -one_id);
     }
-    assert(u->writer_waiting);
+    assert(temp.writer_waiting);
   }
 
-  SUTEX temp = *u; // sufficient to get the unknown non-sutex bits
   temp.counter = 1;
   temp.writer_waiting = 0;
-  __atomic_store_n(&u->i, temp.i, __ATOMIC_SEQ_CST);
-  // POP the other two unverified options are __ATOMIC_RELAXED and __ATOMIC_RELEASE
-  // POP these [un-atomic versions] are sufficient if the compiler/cpus respect them
-  // u->counter = 1; // counter first then flag last
-  // u->writer_waiting = 0;
+  __atomic_store_n(&u->i, temp.i, __ATOMIC_RELEASE);
 
   return SUCCESS;
 }
@@ -284,8 +309,10 @@ int SUTEX::sutex_upgrade_lock(SUTEX *u, const bool try_only, const I allowed_cou
 
   if(DEBUG)
   {
-    assert(u->counter > 0);
-    assert(u->counter >= allowed_counter);
+    SUTEX temp;
+    __atomic_load(u, &temp, __ATOMIC_RELAXED);
+    assert(temp.counter > 0);
+    assert(temp.counter >= allowed_counter);
   }
 
   // "allowed_counter" is the best we can do [short of stack-tracking]:

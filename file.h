@@ -112,6 +112,23 @@ struct FILE_REGISTRY
 
   static FILE_REGISTRY& singleton();
 
+  std::string to_string()
+  {
+    std::string s = "";
+    s += "{";
+
+    for(const auto& p : this->refs)
+    {
+      s += p.first;
+      s += "=";
+      s += std::to_string(p.second);
+      s += ", ";
+    }
+
+    s += "}";
+    return s;
+  }
+
   ~FILE_REGISTRY()
   {
     if(POP_unset_unused_keys)

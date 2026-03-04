@@ -106,6 +106,8 @@ void ITERATOR_LAYOUT::ITERATOR_LAYOUT_HELPER(const SLOP& parent, bool last)
       // P_O_P we're doing this second one (the first one) [the constructor on slop] because we need to get width on rlink3 without getting width on what it points to - create a method that all it does is follow the rlink [leverage the work done in the existing call] instead of causing us to call SLOP_constructor_helper again. None of this may make any difference
       // P_O_P alternatively, we can do the normal slop constructor, but check is_tracking_parent_of_slab() and set observed_width_aligned=16 if so. Done
       // slop.SLOP_constructor_helper(child_ptr, 0, true, false);
+      // NB. I don't think you can call kerr() here.
+      // std::cerr << "should_memory_mapped_descend: " << (should_memory_mapped_descend) << "  " << "known_regular_stride: " << (known_regular_stride) << "\n";
       slop.SLOP_constructor_helper(child_ptr, 0, true, should_rlink_descend, should_memory_mapped_descend);
       observed_width_aligned = slop.layout()->width_aligned_claimed_in_mixed_parent();
       assert(SLAB_ALIGNED(observed_width_aligned));
@@ -133,6 +135,7 @@ void ITERATOR_LAYOUT::ITERATOR_LAYOUT_HELPER(const SLOP& parent, bool last)
   }
 
   SLAB s = (SLAB){.t_slab_object_layout_type=LAYOUT_TYPE_TAPE_HEAD_UNCOUNTED_ATOM,
+               // .second_four=r.header_pointer_begin()->second_four,
                   .third_two=r.header_pointer_begin()->third_two,
                   .v = target};
   s.zero_sutex_values();
@@ -167,6 +170,7 @@ void ITERATOR_LAYOUT::sideways(I count)
         s += observed_width_aligned * count; 
         child_ptr = (SLAB*)s;
 /////////////////////////////////////////////////////////////////////////////////////////
+        if(slop.is_tracking_memory_mapped()) slop.neutralize(false, true);
         slop.SLOP_constructor_helper(child_ptr, 0, true, should_rlink_descend, should_memory_mapped_descend);
 /////////////////////////////////////////////////////////////////////////////////////////
       }
@@ -187,13 +191,13 @@ void ITERATOR_LAYOUT::sideways(I count)
 
         DO(count, 
 /////////////////////////////////////////////////////////////////////////////////////////
-           I width = slop.layout()->width_aligned_claimed_in_mixed_parent();
+           I width = slop.self_or_literal_memory_mapped_if_tracked().layout()->width_aligned_claimed_in_mixed_parent();
 /////////////////////////////////////////////////////////////////////////////////////////
            assert(SLAB_ALIGNED(width));
            s += width;
            child_ptr = (SLAB*)s;
 /////////////////////////////////////////////////////////////////////////////////////////
-           // Bug. I think there's likely a bug here related to should_memory_mapped_descend, because depending on whether the MEMORY_MAPPED is a child of an RLINK3 inside of a VARSLAB, or simply inline inside of a VARSLAB, we'd need to be able to compute `width` correctly and I'm not sure that the current code does that. You could do it by taking a step back and precomputing the width before allowing a descent.
+           if(slop.is_tracking_memory_mapped()) slop.neutralize(false, true);
            slop.SLOP_constructor_helper(child_ptr, 0, true, should_rlink_descend, should_memory_mapped_descend);
 /////////////////////////////////////////////////////////////////////////////////////////
         )

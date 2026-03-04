@@ -99,7 +99,7 @@ std::weak_ordering PRESENTED_BASE::compare(const SLOP& x)
     // }
 
     auto cc = parent()->countI() <=> x.countI();
-    if(std::is_neq(cc)) return cc;
+    if(0 != cc) return cc; // if(std::is_neq(cc)) return cc;
 
     // Question. So all empty lists are equal then, regardless of type? Answer. Yes, because representational type
 
@@ -108,8 +108,7 @@ std::weak_ordering PRESENTED_BASE::compare(const SLOP& x)
 
 
 
-    auto g = [&](const SLOP& a, const SLOP& b) { c = a.compare(b);
-      early_break_flag = (0 !=c);};  // std::is_neq(c);};
+    auto g = [&](const SLOP& a, const SLOP& b) { c = a.compare(b); early_break_flag = (0 !=c);};  // std::is_neq(c);};
     parent()->iterator_duplex_presented_subslop(g, x, &early_break_flag);
 
     return c;

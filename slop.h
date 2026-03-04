@@ -72,8 +72,9 @@ struct SLOP {
       assert(sp->r_slab_reference_count < 2); // If we're going to update parent, it needs to not be not referenced (or pre-cowed)
 
       // Remark. Seems like it's fine here to leverage a LIST's RLINK_UNIT as a regular RLINK [parent tracker] instead of as a LIST's SLABM. Motivation. This frees up `SLABM_UNIT` to deal with non-rlink units
-      SLOP_constructor_helper((SLAB**)&sp->a, depth); // call "constructor" again
       // SLOP_constructor_helper(sp->a, depth + 1); // call "constructor" again deeper
+      // SLOP_constructor_helper((SLAB**)&sp->a, depth); // call "constructor" again
+      SLOP_constructor_helper((SLAB**)&sp->a, depth, false, memory_mapped_descend); // call "constructor" again
 
       // // Idea. this makes me wonder if we shouldn't merge these parent trackers into returning a TAPE_HEAD iterator instead. This may or may not work.
       // *auto_slab() = (SLAB){.m_memory_expansion_size=LOG_SLAB_WIDTH,
@@ -103,7 +104,14 @@ struct SLOP {
       auto& m = *(A_MEMORY_MAPPED*)this->presented();
       I r = m.increment_redundant_write_lock_counter(); // For sutex write/exclusive locks, store a "redundant" counter on the MEMORY_MAPPED slab because thread-exclusive sutex locks don't have the notion of a count. Sutex read/shared locks already have a count notion so won't need this. A benefit of this is that we don't have to worry about single-thread SLOP-to-SLOP copies/moves or out-of-order freeing, say by `neutralize` or "cpp-userland automatic object lifetime out of order stack mismanagement". Feature. Er, technically this should go in the critical section below, but we can't move it past where we neutralize `this`, so maybe we need to wrap all of this in a critical section, but I haven't verified that's OK yet. Idea. Could store the pointer to the redundant count without incrementing it yet, then move that increment down below into the critical section
       auto h = m.get_good_slop();
+
+if(false && this->is_tracking_memory_mapped())
+{
+  this->neutralize(true);
+}
+else 
       this->neutralize(); // don't free `sp`, the MEMORY_MAPPED slab pointer
+
       *this = h;
       assert(this->slabp != this->auto_slab()); // we need the space for below
 
@@ -155,7 +163,7 @@ struct SLOP {
     SLOP_constructor_helper(spp, depth, reuse);
   }
 
-  void SLOP_constructor_helper(SLAB slab4_unit, bool raw = true)
+  void SLOP_constructor_helper(SLAB slab4_unit, bool raw = true, int depth = 0, bool reuse = false, bool rlink_descend = true, bool memory_mapped_descend = true )
   {
     *auto_slab() = slab4_unit;
 
@@ -176,7 +184,8 @@ struct SLOP {
     // Question. Should we do this, and [potentially] populate as parented link, or accept the SLAB values raw and simply reconstitute_vtables() ?
     if(!raw)
     {
-      SLOP_constructor_helper((SLAB*)auto_slab());
+      // SLOP_constructor_helper((SLAB*)auto_slab());
+      SLOP_constructor_helper((SLAB*)auto_slab(), depth, reuse, rlink_descend, memory_mapped_descend);
     }
 
     if(raw)
@@ -318,6 +327,7 @@ struct SLOP {
         new(presented_vtable) A_SPAN_NANOSECONDS_UNIT();
         break;
       case UNTYPED_ARRAY:
+        // Warning. Don't simply do `SLOP_presented_type_helper(PREFERRED_MIXED_TYPE); break;` because that prevents UNTYPED_ARRAY from demoting to say an integer vector like INT0_ARRAY. The mixed types would add an integer as an RLINK3_UNIT to an integer atom, or a SLAB4 containing an RLINK3 to an integer atom, and so on.
         *auto_slab() = (SLAB){.m_memory_expansion_size=LOG_SLAB_WIDTH, .t_slab_object_layout_type=LAYOUT_TYPE_COUNTED_VECTOR_PACKED, .presented_type=p,.smallcount_vector_byte_count=0, .vector_container_width_cap_type=CAPPED_WIDTH_BOUNDLESS, .attribute_known_sorted_asc=1, .attribute_known_sorted_desc=1, .i=0};
         new(layout_vtable) LAYOUT_COUNTED_VECTOR_PACKED();
         new(presented_vtable) A_UNTYPED_ARRAY();
@@ -363,7 +373,7 @@ struct SLOP {
         new(presented_vtable) A_FLOAT3_ARRAY();
         break;
       case UNTYPED_RLINK3_ARRAY:
-        *auto_slab() = (SLAB){.m_memory_expansion_size=LOG_SLAB_WIDTH, .t_slab_object_layout_type=LAYOUT_TYPE_COUNTED_VECTOR_PACKED, .presented_type=p,.smallcount_vector_byte_count=0,.vector_container_width_cap_type=CAPPED_WIDTH_3, .attribute_known_sorted_asc=1, .attribute_known_sorted_desc=1, .n=0};
+        *auto_slab() = (SLAB){.m_memory_expansion_size=LOG_SLAB_WIDTH, .t_slab_object_layout_type=LAYOUT_TYPE_COUNTED_VECTOR_PACKED, .presented_type=p,.smallcount_vector_byte_count=0,.vector_container_width_cap_type=CAPPED_WIDTH_BOUNDLESS, .attribute_known_sorted_asc=1, .attribute_known_sorted_desc=1, .n=0};
         new(layout_vtable) LAYOUT_COUNTED_VECTOR_PACKED(); // Question. Don't make it PACKED because we don't want this in TRANSIENT/AUTO memory with pointers? Could put s/t in the destructor??
         new(presented_vtable) A_UNTYPED_RLINK3_ARRAY();
         break;
@@ -447,6 +457,31 @@ struct SLOP {
       case ERROR_UNIT:
         SLOP_error_type_helper(0, "Unspecified Error");
         break;
+      case MEMORY_MAPPED:
+        // here to facilitate keyword search
+        // see FILE_OPERATIONS::memory_mapped_from_drive_path_flat_singlefile
+        die(); 
+        break;
+      case ZIP_ARRAY:
+        *auto_slab() = (SLAB){.m_memory_expansion_size=LOG_SLAB_WIDTH, 
+                              .t_slab_object_layout_type=LAYOUT_TYPE_COUNTED_LIST, .presented_type=p,
+                              .attribute_zero_if_known_that_top_level_items_all_same_stride_width=0,
+                              .attribute_zero_if_known_children_at_every_depth_are_RLINK3_free=1,
+                              .LIST_HOLDER_attribute_known_sorted_asc=1,
+                              .LIST_HOLDER_attribute_known_sorted_desc=1,
+                              .i=0};
+        new(layout_vtable) LAYOUT_COUNTED_LIST();
+        new(presented_vtable) A_ZIP_ARRAY();
+        assert(auto_slab()->attribute_zero_if_known_children_at_every_depth_are_RLINK3_free);
+
+        layout()->cow_append(MAP_UPG_UPG);   // attributes/metadata
+        layout()->cow_append(UNTYPED_ARRAY); // thread-safe caches
+        layout()->cow_append(CHAR0_ARRAY);   // payload data
+        layout()->cow_append(INT0_ARRAY);    // integer indices into data
+        cowed_rewrite_presented_type(p);
+        A_ZIP_ARRAY &e = *(A_ZIP_ARRAY*)presented();
+        e.init_default_attributes();
+        break;
     }
   }
 
@@ -458,6 +493,8 @@ struct SLOP {
   SLOP(PRESENTED_TYPE p, LAYOUT_TYPE q)
   {
     SLOP_presented_type_helper(p);
+
+    // NB. When rewriting simple newly allocated zero-count arrays (eg INT0_VEC into a counted layout instead of packed), you can get away with rewriting the layout type in place like this. For more complicated changes, probably not.
 
     // P_O_P second time we've reconstituted
     this->slabp->t_slab_object_layout_type = q;
@@ -733,6 +770,8 @@ struct SLOP {
     }
     else if(this->is_tracking_memory_mapped())
     {
+      assert(destruct); // Not positive, but I think you need this, because otherwise you won't decrement the SLOP-level write lock counter
+
       // TODO ?
       // Should this copy the data to the drive? or not?
       // er(copy operator helper this.is_tracking_memory_mapped not yet implemented);
@@ -826,12 +865,12 @@ struct SLOP {
     // 2. When these virtual destructors are populated, even with just a
     //    logging function, having them ahead of the `slop_lose_reference` call
     //    (really, ahead of its sub call to
-    //    `layout_link_parents_lose_references`) causes a crash, which I don't
+    //    `layout_link_parenteds_lose_references`) causes a crash, which I don't
     //    really understand why. they are placement-new, you're still not
     //    supposed to call them twice (which I don't think we do)
     //    The crash message is:
     //      Assertion failed: (!is_tracking_parent_rlink_of_slab() &&
-    //      !is_tracking_parent_slabm_of_slab()), function coerce_to_copy_in_ram,
+    //      !is_tracking_parent_slabm_of_slab()), function coerce_to_copy_in_ram_heap,
     //      file ./slop.cc
     //    which may mean we hosed a parent, or may just be general memory
     //    corruption or undefined behavior. At any rate typically the function
@@ -857,6 +896,7 @@ struct SLOP {
 
     if(is_tracking_memory_mapped())
     {
+      // decrement_tracking_memory_mapped_write_counter();
       // We use this pattern and not `literal_memory_mapped_from_tracked` because we don't want to reference increment it
       SLOP s(NIL_UNIT);
       SLAB* sp = this->auto_slab()->a;
@@ -908,7 +948,7 @@ struct SLOP {
     return SLOP();
   }
 
-  SLOP operator()(...)
+  SLOP operator()(...) // TODO c++23 (clang 15+) should add operator[] with multiple args like this
   {
     return SLOP();
   }
@@ -967,11 +1007,11 @@ struct SLOP {
   bool match(const SLOP& x) const
   {
     // TODO: exact floating point? hash thingies?
-    return std::is_eq(compare(x));
+    return 0 == compare(x);// std::is_eq(compare(x));
   }
 
   friend auto operator<=>(const SLOP& a, const SLOP& b) {return a.compare(b); } 
-  friend bool operator== (const SLOP& a, const SLOP& b) {return std::is_eq(a<=>b); } 
+  friend bool operator== (const SLOP& a, const SLOP& b) {return 0 == (a<=>b); } // std::is_eq(a<=>b); } 
 
 #pragma mark - Cast Operators
 
@@ -1092,8 +1132,8 @@ struct SLOP {
 
 #pragma mark - Reference Management
   void cow(); // coerce cowed
-  void coerce_to_copy_in_ram(bool reference_increment_children = true);
-  SLAB* force_copy_slab_to_ram(bool reference_increment_children = true, bool preserve_tape_heads_literal = false);
+  void coerce_to_copy_in_ram_heap(bool reference_increment_children = true);
+  SLAB* force_copy_slab_to_ram_heap(bool reference_increment_children = true, bool preserve_tape_heads_literal = false);
   void coerce_parented(bool reference_increment_children = true);
 
   bool is_tracking_parent() const;
@@ -1106,15 +1146,17 @@ struct SLOP {
 
   void legit_reference_increment(bool copy_on_overflow = true);
   void legit_reference_decrement(bool decrement_subelements_on_free) const noexcept;
-  void layout_link_parents_gain_references();
-  void layout_link_parents_lose_references() const;
-  void parent_gain_reference();
-  void parent_lose_reference(bool decrement_subelements_on_free = true) const;
+  void layout_link_parenteds_gain_references();
+  void layout_link_parenteds_lose_references() const;
+  void parented_gain_reference();
+  void parented_lose_reference(bool decrement_subelements_on_free = true) const;
   void slop_gain_reference(SLAB* s);
   void slop_lose_reference(bool decrement_subelements_on_free) noexcept;
   void release_slab_and_replace_with(SLAB* s, bool decrement_subelements_on_free = true, bool needs_check_for_changed_layout_or_presented = true);
 
-  void neutralize(const bool destruct = false)
+  void decrement_tracking_memory_mapped_write_counter();
+
+  void neutralize(const bool destruct = false, const bool check_memory_mapped_counter = true)
   {
     // We use this when we want to "free" a slop ahead of time without any side
     // effects, for instance, we don't want the destructor to be called on a
@@ -1123,6 +1165,18 @@ struct SLOP {
 
     // Notably, this lets you reuse a SLOP without affecting any parent it might have had.
     // It also manages any references it may have been holding
+
+
+// bool should = destruct;
+// if(this->is_tracking_memory_mapped())
+// {
+//   should = true;
+// }
+
+    if(!destruct && check_memory_mapped_counter && is_tracking_memory_mapped())
+    {
+      decrement_tracking_memory_mapped_write_counter();
+    }
 
     if(destruct) this->slop_destructor_helper();
     this->slabp = this->auto_slab();

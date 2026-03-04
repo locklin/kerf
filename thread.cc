@@ -234,14 +234,26 @@ void THREAD::handle_SIGUSR2(int sig)
   pthread_exit(nullptr);
 }
 
+#if defined(__has_feature)
+#if __has_feature(address_sanitizer) // code that builds only under AddressSanitizer
+extern "C" {
+void __asan_on_error() {
+  std::cout << "Address sanitizer detected an error: " << "" << std::endl;
+}
+}
+#endif
+#endif
+
 void THREAD::handle_SIGABRT(int sig)
 {
 #if defined(__has_feature)
 #if __has_feature(address_sanitizer) // code that builds only under AddressSanitizer
+#if ASAN_STACKTRACE_ON_SIGABRT
   const bool stack_dump_when_abort = true;
   char *m = (char*)malloc(1);
   free(m);
   if(stack_dump_when_abort) m[0] = 1; // trigger asan stacktrace. i'd rather use anything cleaner. having trouble getting -lunwind on macos
+#endif
 #endif
 #endif
 }
@@ -251,19 +263,47 @@ void* THREAD::kerf_init_wrapper(void *arg)
   // the passed `arg` was a `new` clone of the object
   // doing this new/delete this is necessary to prevent thread race conditions I think
   auto *copy = (THREAD*)arg;
+  auto passed_normalized_id = copy->normalized_id;
   auto should_init_deinit_kerf_vm_thread_stuff = copy->should_init_deinit_kerf_vm_thread_stuff;
   auto function_to_call = copy->function_to_call;
   auto function_data = copy->function_data;
   auto prio = copy->param.sched_priority;
   auto cancel_type = copy->cancel_type;
   auto cancel_state = copy->cancel_state;
+  auto late_thread_id_pointer_for_passing = copy->late_thread_id_pointer_for_passing;
   delete copy;
 
   void *ret = nullptr;
 
-  kerf_suggest_bind_thread_to_cpu(); // TODO: probably moves to where attr are set
+
+  // force acquire
+  bool flag = __atomic_load_n(&The_Normalized_Thread_Id_Table_Bool[passed_normalized_id], __ATOMIC_ACQUIRE);
+  assert(flag);
+
+  // Wait for the creating thread to return from pthread_create (having written
+  // the thread_id). For whatever reason this seems necessary rather than just
+  // populating the The_Normalized_Thread_Id_Table ourself (only writing from
+  // this thread causes a crash for some reason; it wouldn't allow us to write
+  // to some garbage local place in the creating thread).
+  // Warning. Waiting on the creating thread is also necessary to avoid a race
+  // condition where this thread exits (& potentially a 2nd new thread contends
+  // for that row) before the creating thread finishes writing that id.
+  while(!pthread_equal(pthread_self(), The_Normalized_Thread_Id_Table[passed_normalized_id]))
+  {
+    // NB. Usually this is skipped, but if it causes floods, potentially change to longer relax or b.pause() with BACKOFF b above
+    kerf_cpu_relax();
+  }
+
+  // while(pthread_equal(NULL_PTHREAD_T, The_Normalized_Thread_Id_Table[passed_normalized_id])) b.pause();
+  // The_Normalized_Thread_Id_Table[passed_normalized_id] = pthread_self();
+
+  kerf_suggest_bind_thread_to_cpu(); // TODO: possibly moves to where attr are set?
 
   assert(!pthread_equal(pthread_self(), NULL_PTHREAD_T));
+
+  assert(pthread_equal(pthread_self(), The_Normalized_Thread_Id_Table[passed_normalized_id]));
+
+  *late_thread_id_pointer_for_passing = pthread_self();
 
   int s, oldtype, oldstate;
 
@@ -349,9 +389,13 @@ void THREAD::handle_error_en(int en, const char* msg)
 
 int THREAD::init()
 {
-  this->normalized_id = kerf_acquire_normalized_thread_id(false); // acquiring for the new thread, not this thread
+  bool retries = true;
+
+  this->normalized_id = kerf_acquire_normalized_thread_id(false, true); // acquiring for the new thread, not this thread
+
   if(-1 == this->normalized_id)
   {
+    // Question. Should we add a function-local/compile-time toggle here to keep retrying until not -1?
     perror("Error acquiring normalized thread id for new thread (are threads over capacity?)");
     return -1;
   }
@@ -436,9 +480,17 @@ int THREAD::start()
     }
 
     copy_must_delete = new auto(*this);
+    copy_must_delete->late_thread_id_pointer_for_passing = &this->late_thread_id;
 
-    s = pthread_create(&this->thr, &this->attr, &this->kerf_init_wrapper, copy_must_delete); // deleted inside
-    The_Normalized_Thread_Id_Table[this->normalized_id] = this->thr;
+    assert(-1 != this->normalized_id);
+
+    // this->late_thread_id = NULL_PTHREAD_T; // probably redundant
+
+    // Question. Why do I need the The_Normalized_Thread_Id_Table write instead of just storing the late_thread_id local if I'm also populating the id in the newly spawned thread? Weird. We want to make it local or at least get it out of the table since there may be a race condition if this thread (often main) is still attempting to write to the table after the newly spawned thread has exited. 2026.02.19 Similarly, there's a race condition where you try to join (say from main) using that global reference but the thread has already exited (hence wiped it) so you need to store it locally
+    s = pthread_create(&The_Normalized_Thread_Id_Table[this->normalized_id], &this->attr, &this->kerf_init_wrapper, copy_must_delete); // deleted inside
+    // s = pthread_create(&late_thread_id, &this->attr, &this->kerf_init_wrapper, copy_must_delete); // deleted inside
+    
+    // this->late_thread_id = copy_must_delete // this would be a race cond
 
     if (s != 0)
     {
@@ -448,6 +500,13 @@ int THREAD::start()
     }
 
     succeed:
+
+      while(NULL_PTHREAD_T == this->late_thread_id)
+      {
+        // NB. if it causes floods, potentially change to longer relax or b.pause() with BACKOFF b above
+        kerf_cpu_relax();
+      }
+
       this->deinit(); // free attr
       return;
 
@@ -455,8 +514,10 @@ int THREAD::start()
       this->deinit(); // free attr
       if(-1 != this->normalized_id) // release normalized thread id
       {
-        The_Normalized_Thread_Id_Table_Bool[this->normalized_id] = false;
-        The_Normalized_Thread_Id_Table[this->normalized_id] = NULL_PTHREAD_T;
+        // The_Normalized_Thread_Id_Table[this->normalized_id] = NULL_PTHREAD_T;
+        // The_Normalized_Thread_Id_Table_Bool[this->normalized_id] = false;
+        __atomic_store_n(&The_Normalized_Thread_Id_Table[this->normalized_id], NULL_PTHREAD_T, __ATOMIC_RELAXED);
+        __atomic_store_n(&The_Normalized_Thread_Id_Table_Bool[this->normalized_id], false, __ATOMIC_RELEASE);
       }
       return;
   });
@@ -466,7 +527,15 @@ int THREAD::start()
 
 int THREAD::join(void **retval)
 {
-  return pthread_join(this->thr, retval);
+  if(this->late_thread_id == NULL_PTHREAD_T)
+  {
+    er(late_thread_id == NULL_PTHREAD_T)
+    return 0;
+  }
+  return pthread_join(this->late_thread_id, retval);
+
+  // Warning. This yields a race condition because the pthread may finish and wipe itself before we have it here in the caller
+  // return pthread_join(The_Normalized_Thread_Id_Table[this->normalized_id], retval);
 }
 
 } // namespace

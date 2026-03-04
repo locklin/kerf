@@ -14,6 +14,7 @@ sigjmp_buf *The_Hard_Jmp_Envs[KERF_MAX_NORMALIZABLE_THREAD_COUNT]; // ignore nes
   I The_Cpp_Slop_Workstacks_Prior_Heights[KERF_MAX_NORMALIZABLE_THREAD_COUNT];
   I The_Cpp_Generic_Workstacks_Prior_Heights[KERF_MAX_NORMALIZABLE_THREAD_COUNT];
 #endif
+
 std::atomic<I> The_Mmap_Total_Byte_Counter = 0;
 std::atomic<I> The_Munmap_Leak_Tracker = 0;
 

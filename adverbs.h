@@ -252,7 +252,8 @@ SLOP mapcores(L &&lambda, const SLOP& a)
 
   THREAD_POOL pool(threads_needed);
 
-  std::future<SLOP> async[threads_needed];
+  // std::future<SLOP> async[threads_needed];
+  std::future<SLOP>* async = (std::future<SLOP>*)alloca(sizeof(std::future<SLOP>) * threads_needed);
 
   for (I i = 0; i < threads_needed; i++) 
   {

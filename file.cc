@@ -629,7 +629,7 @@ void FILE_OPERATIONS::write_to_drive_path_multifile_expanded(const SLOP &x, std:
     down /= stem;
     down += separator;
     down += std::to_string(my_number);
-    down += extension;
+    down += extension; // retain old extension, or alternatively force to standard extension: down += FILENAME_BINARY_EXTENSION;
 
     write_to_drive_path_multifile_expanded(x, down, self);
   };
@@ -952,7 +952,7 @@ SLOP FILE_OPERATIONS::memory_mapped_from_drive_path_flat_singlefile(std::string 
   // Remark. For the most part we just want to mmap in the entire file and then produce a temporary pointer that's been offset to the object we want (typically, the offset will be 0, but suppose we want to mmap in just one column of a large flat singlefile table). You could attempt to mmap in only the portion you're using, but this presents several difficulties: your object may not live on the imposed page boundary, it may not properly end on one, these differences will produce a width that deviates from the filesize, and it is currently unclear what implementing this additional logic buys us. Further, if you attempt to do this, you could claim that only that region is locked, and this implies tracking subregions in the FILE_REGISTRY. Again, for what purpose? (Later, perhaps, this could maybe be used as part of a kerf1 style edit-map-shared-files-in-place kind of thing.) For now I believe this is best avoided.
 
   SLOP m(PREFERRED_MIXED_TYPE);
-  m.coerce_to_copy_in_ram(false);
+  m.coerce_to_copy_in_ram_heap(false); // force to heap from stack
   SLOP n = MAP_UPG_UPG;
   n.amend_one((I)A_MEMORY_MAPPED::MEMORY_MAPPED_ATTRIBUTE_PATH, ""); // sic, before changing presented type
   m.layout()->cow_append(n);

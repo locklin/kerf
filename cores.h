@@ -68,18 +68,19 @@ pthread_t The_Normalized_Thread_Id_Table[KERF_MAX_NORMALIZABLE_THREAD_COUNT];
 bool The_Normalized_Thread_Id_Table_Joinable[KERF_MAX_NORMALIZABLE_THREAD_COUNT];
 pthread_t NULL_PTHREAD_T = {};
 
-SUTEX The_Kerf_Tree_Parent_Sutex = {0}; // TODO um, maybe wherever this is currently present in the source, we may need locks up and down the kerf tree instead of just at this root/parent node.
+SUTEX The_Kerf_Tree_Parent_Sutex = {0}; // TODO um, maybe wherever this is currently present in the source, we may need locks up and down the kerf tree instead of just at this root/parent node. // 2026.03.02 If you build your MAPs with the sutex inside of them, and then put a dummy map in front of root (that can never be edited), maybe this will make the source cleaner, instead of having an extra sutex outside.
 SLAB* The_Kerf_Tree = nullptr;
 I The_Main_Thread_Normalized_ID = 0;
 
 // Remark. May want to bundle these into a THREAD_PACKAGE or somesuch, or move pools onto KVMs
-// POP. If this gets too big on startup (the per-thread storage) we can change it to not allocate until a thread is created, say when a given normalized id is returned for the first time.
+// POP. lazily allocate. If this gets too big on startup (the per-thread storage) we can change it to not allocate until a thread is created, say when a given normalized id is returned for the first time. (
 THREAD_SAFE_MALLOC_POOL* The_Thread_Memory_Pools = new THREAD_SAFE_MALLOC_POOL[KERF_MAX_NORMALIZABLE_THREAD_COUNT];
 SLAB* The_Thread_VMs = new SLAB[KERF_MAX_NORMALIZABLE_THREAD_COUNT]; // this type will change to whatever it is we end up using for KVMs
 #if CPP_WORKSTACK_ENABLED
   std::vector<SLOP*> *The_Cpp_Slop_Workstacks = new std::vector<SLOP*>[KERF_MAX_NORMALIZABLE_THREAD_COUNT]; // TODO move these onto Thread_VMs, or maybe not if we don't intend to transmit them
   std::vector<REGISTERED_FOR_LONGJMP_WORKSTACK*> *The_Cpp_Generic_Workstacks = new std::vector<REGISTERED_FOR_LONGJMP_WORKSTACK*>[KERF_MAX_NORMALIZABLE_THREAD_COUNT]; // TODO move these onto Thread_VMs, or maybe not if we don't intend to transmit them
 #endif
+char* The_Zip_Transform_Buffers[KERF_MAX_NORMALIZABLE_THREAD_COUNT][2][ZIP_FORMAT_DEFAULT_LZ4_WINDOW_BYTES]; // POP too big. at 2*65k*1000 threads this is 130MB, too big for starup. these global per-thread transform buffers should be changed to be 1. located on the per-thread global object (The_Thread_VMs interpreter thing) 2. lazily allocate 3. expand to high watermark of the zip window needed (probably around 65k), probably using char0_array POP. Instead of having these per-thread, we could also have a more limited pool of them that the threads can acquire via lock. note that even with lazy allocation, you'll still have up to 130MB overhead (!) with 1000 threads (given a 65k window).
 
 #pragma mark - Thread ID Utils
 
@@ -88,11 +89,12 @@ I The_Cores_Count = kerf_count_hardware_threads();
 I The_Suggested_Core_Counter = 0;
 
 auto kerf_get_unnormalized_thread_id();
-I    kerf_acquire_normalized_thread_id(bool checks_existing = false);
+I    kerf_acquire_normalized_thread_id(bool checks_existing = false, bool for_someone_else = false);
 I    kerf_retrieve_acquired_normalized_thread_id_bypass_cache();
 void kerf_set_cached_normalized_thread_id(I id);
 I    kerf_get_cached_normalized_thread_id();
 void kerf_release_normalized_thread_id();
+// __attribute__((no_sanitize("thread"))) void kerf_release_normalized_thread_id(); // thread san reports a race b/t threads for this function, I think it's a false-positive and that our gating is sound
 
 #pragma mark - CPU Utils
 

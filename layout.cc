@@ -609,6 +609,7 @@ SLOP LAYOUT_BASE::slop_from_unitized_layout_chunk_index(I i)
     case CHUNK_TYPE_UNCHUNKED_RAW_BYTE_DATA:
       return SLOP((C)presented()->integer_access_raw(payload_pointer_to_ith_chunk(i)));
     case CHUNK_TYPE_VARINT:
+      // NB. I don't think this chunk-based striation is going to work for eg datetime types. We probably need something to the effect of "unit_type_for_vector" on PRESENTED type vectors so we get a conversion from eg A_STAMP_HOUR_ARRAY to A_STAMP_HOUR_UNIT. we could also build a C enum->enum table. OTOH, do we want them to index as those specially defined types or do we want them to become just INTs? (Probably the specially defined types.)
       return SLOP((I)presented()->integer_access_wrapped(payload_pointer_to_ith_chunk(i)));
     case CHUNK_TYPE_VARFLOAT:
       return SLOP((F)presented()->float_access_raw(payload_pointer_to_ith_chunk(i)));
@@ -811,6 +812,7 @@ void LAYOUT_BASE::promote_or_expand_via_widths(I settled_log_width, I incoming_c
 
   // second_four should happen before setting presented_type if presented_type is inside it
   // assert(offsetof(SLAB,presented_type) == offsetof(SLAB, second_four) + sizeof(dest->second_four) - 1); 
+  // dest->second_four = this->header_pointer_begin()->second_four;
   dest->third_two = this->header_pointer_begin()->third_two;
   // dest->vector_container_width_cap_type = this->slabp->vector_container_width_cap_type;
 
@@ -1180,7 +1182,24 @@ void LAYOUT_BASE::cow_append(const SLOP &rhs)
             revised_cap = CAPPED_WIDTH_3;
             break;
           default:
-            revised_type = UNTYPED_RLINK3_ARRAY; // you can't do PREFERRED_MIXED_ARRAY_TYPE until you handle potential LAYOUT changes for SLAB4/LIST 
+            revised_type = PREFERRED_MIXED_TYPE;
+            switch(PREFERRED_MIXED_TYPE)
+            {
+              case UNTYPED_RLINK3_ARRAY:
+                // noop
+                break;
+              default: 
+                // die(PREFERRED_MIXED_TYPE not implemented in LAYOUT_BASE::cow_append)
+              case UNTYPED_SLAB4_ARRAY:
+              case UNTYPED_LIST:
+              case UNTYPED_JUMP_LIST:
+              {
+                SLOP r(revised_type);
+                r.layout()->cow_append(rhs);
+                *parent() = r; // POP this probably isn't as fast as simply rewriting it all in place like we're doing for UNTYPED_RLINK3_ARRAY (and also rewriting the layout now for these ones. also note these ones won't have cap_type)
+                return;
+              }
+            }
             break;
         }
 
@@ -1208,7 +1227,7 @@ void LAYOUT_BASE::cow_append(const SLOP &rhs)
 
       assert(rhs.slabp != parent()->slabp); // partial cycle check
       // TODO Here at RLINK3_ARRAY and at SLAB4_ARRAY: Isn't there a check we need to make somewhere about not creating a cycle? reference counting cycle. Yes, there's a trick we used in Kona/Kerf1, you just need to check if the top-level RHS is anything on the chain to root (kerf tree root, or function tree root, what have you), b/c you can assume RHS is cycle free (induction), hence it can only form a cycle if a subelement is in LHS ancestry, hence top RHS must be LHS or LHS ancestor [graph theory!]. Anyway: append() is probably the wrong place to check for this b/c of speed/accessibility reasons, we can add a toggleable debug-time cycle check assert [thorough], but for speed reasons the real check should pr. take place in a top-level amend function and occur as you descend. See kona/kerf1 source.
-
+      
       SLOP c = rhs; // P_O_P can we do this without a copy? keep rhs wo/ dropping the const thing?
 
       // if(rhs.is_tracking_memory_mapped()) { c = rhs.self_or_literal_memory_mapped_if_tracked(); }
@@ -1223,6 +1242,7 @@ void LAYOUT_BASE::cow_append(const SLOP &rhs)
     }
     case CHUNK_TYPE_VARSLAB:
     {
+
       if(rhs.layout()->header_get_slab_object_layout_type() == LAYOUT_TYPE_TAPE_HEAD_UNCOUNTED_ATOM)
       {
         SLOP hack = rhs.operator[](0)[0]; // P_O_P this is probably slow.
@@ -1288,7 +1308,6 @@ void LAYOUT_BASE::cow_append(const SLOP &rhs)
         // Remark. Important.
         // Only size16 blocks can be rewritten as rlinks [in O(1) time]! Size8 blocks are too small and trigger O(n) full rewrite. Size>16 blocks will leave "gaps" and mess up iteration, because RLINK has no way to report that irregular width. Two possible workarounds: 1. If A. the replaced object was a power of 2 and B. we changed width reporting to look at m and not just used, that would help. 2. If we made a special layout which was just a "spacer" (consumes used-data specified by int3 I 64-bit int 8 bytes wide) then we could put an RLINK unit in it somehow or another type of unit.
 
-
         SLOP c = rhs; // P_O_P can we do this without a copy? keep rhs wo/ dropping the const thing?
         c.coerce_parented();
         // NB. until this pointer makes it onto the SLAB4_ARRAY farther down, it's untracked (risk of memory leak)
@@ -1304,6 +1323,7 @@ void LAYOUT_BASE::cow_append(const SLOP &rhs)
         width_appending_aligned = rlink_fixed_width;
 
         temp.SLOP_constructor_helper((SLAB)b); // mostly fixes up b's memory header
+        // temp.SLOP_constructor_helper((SLAB)b,true,0,false,true,false); // mostly fixes up b's memory header
         // temp.slabp->m_memory_expansion_size = MEMORY_UNPERMISSIONED_TENANT_NOEXPAND;
         assert(temp.slabp->m_memory_expansion_size == rlink_fixed_log_width);
         flat_rhs = &temp;
@@ -1313,7 +1333,7 @@ void LAYOUT_BASE::cow_append(const SLOP &rhs)
       if(remain < width_appending_aligned)
       {
         I invariant = this->presented()->chunk_width_log_bytes();
-        I incoming_chunks = round_up_nearest_multiple(width_appending_aligned, POW2(invariant)) >> (invariant);
+        I incoming_chunks = round_up_nearest_multiple_of_a_pow2(width_appending_aligned, POW2(invariant)) >> (invariant);
         assert(incoming_chunks * POW2(invariant) >= width_appending_aligned);
         this->promote_or_expand_via_widths(invariant, incoming_chunks, true, width_appending_aligned);
       }
@@ -1407,14 +1427,16 @@ void LAYOUT_BASE::cow_join(const SLOP &rhs)
 
 void LAYOUT_BASE::cow_amend_one(I k, const SLOP &rhs)
 {
-    // P_O_P: Θ(n) Reminder: check attr sorted asc/desc
-    // Reminder Don't forget actual cow() when switching to O(1)
+    // P_O_P: Θ(n) Reminder: check attr sorted asc/desc Reminder: Don't forget actual cow() when switching to O(1)
+
     SLOP u(UNTYPED_ARRAY);
 
     // inherit layout/presented attributes (Question. Does this work in all cases (UNTYPED_ARRAY won't genuinely recognize some eg INT*_ARRAY?, but must port them)?)
+    // TODO second_four doesn't work if you're inheriting from say UNTYPED_SLAB4_ARRAY which has a different slab layout
+    // u.layout()->header_pointer_begin()->second_four = layout()->header_pointer_begin()->second_four;
     u.layout()->header_pointer_begin()->third_two = layout()->header_pointer_begin()->third_two;
     // cleanup
-    u.layout()->header_pointer_begin()->presented_type = UNTYPED_ARRAY;
+    // u.layout()->header_pointer_begin()->presented_type = UNTYPED_ARRAY; // handled by SLOP constructor
     u.layout()->header_set_byte_counter_to_value_unchecked(0);
 
     I i = 0;
@@ -1440,7 +1462,6 @@ void LAYOUT_BASE::cow_amend_one(I k, const SLOP &rhs)
       parent()->cowed_rewrite_presented_type(old_presented);
       // parent()->slabp->presented_reserved = old_presented_reserved;
     }
-
     
     return;
 }

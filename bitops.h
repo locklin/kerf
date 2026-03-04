@@ -92,10 +92,9 @@ constexpr inline char floor_log_2(unsigned long long v)
 }
 
 constexpr inline char is_power_of_2(I v){return !(v & (v - 1));}
-constexpr inline I __attribute__ ((hot))  round_up_nearest_power_of_2(I v){return POW2(ceiling_log_2(v));}
-constexpr inline I __attribute__ ((pure)) round_up_nearest_multiple_of_8(I v){I m = 8-1; return (v&~m) + 8*(!!(v&m));} // formerly return (v&m)?8+(v&~m):v;
-constexpr inline I round_up_nearest_multiple(I v, I x){I m = x-1; return (v&~m) + x*(!!(v&m));}
-constexpr inline I round_up_nearest_multiple_slab_align(I v){return round_up_nearest_multiple(v, SLAB_ALIGN);};
+constexpr inline I __attribute__ ((hot)) __attribute__ ((pure)) round_up_nearest_power_of_2(I v){return POW2(ceiling_log_2(v));}
+constexpr inline I  __attribute__ ((pure)) round_up_nearest_multiple_of_a_pow2(I v, I x){assert(is_power_of_2(x)); const I m = x-1; return v+m&~m;}
+constexpr inline I round_up_nearest_multiple_slab_align(I v){return round_up_nearest_multiple_of_a_pow2(v, SLAB_ALIGN);};
 
 #define BIT_WORD(p,n) (((UC*)(p))[(n)/CHAR_BIT])
 #define BIT_MASK(n)   (((uintmax_t)1)<<(BYTE_MSBIT0_TO_LSBIT7_IF_TRUE ?((CHAR_BIT - 1)-((n)%CHAR_BIT)):((n)%CHAR_BIT)))

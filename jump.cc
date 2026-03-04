@@ -150,6 +150,8 @@ void hard_jmp_wrapper(L &&lambda)
   {
     case 0:
     {
+      assert(normalized_id > -1);
+      assert(normalized_id < KERF_MAX_NORMALIZABLE_THREAD_COUNT);
       The_Hard_Jmp_Envs[normalized_id] = &jmp_env;
       The_Soft_Jmp_Envs[normalized_id] = The_Hard_Jmp_Envs[normalized_id];
   

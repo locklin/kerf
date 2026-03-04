@@ -366,13 +366,15 @@ struct A_GROUPED : A_ARRAY
   CHUNK_TYPE_MEMBER presented_chunk_type() {return CHUNK_TYPE_RLINK3;} // NB. this will be overridden by LAYOUT for LIST formats
 
   virtual I layout_index_of_grouped_metadata(){return 0;}
-  virtual I layout_index_of_grouped_indices(){return 1;}
-  virtual I layout_index_of_grouped_keys(){return 2;}
-  virtual I layout_index_of_grouped_values(){return 3;}
+  virtual I layout_index_of_grouped_indices(){ return 1;}
+  virtual I layout_index_of_grouped_keys(){    return 2;}
+  virtual I layout_index_of_grouped_values(){  return 3;}
+  virtual I layout_index_of_grouped_cache(){   return 4;}
   SLOP grouped_metadata();
   SLOP grouped_indices();
   SLOP grouped_keys();
   SLOP grouped_values();
+
 
   SLOP indices();
   SLOP keys();
@@ -421,7 +423,7 @@ struct A_FOLIO_ARRAY : A_GROUPED
   // Remark. P_O_P. You can cache the list sizes if you need to to do O(log k) binsearch on positions. This is a nice cache b/c lists at pos < k [should not] will not change in length, only the last 
   // Remark. The 0th layout item may need to be the cache of k sizes. Then the k lists can start after that
   // Remark. The 1st layout item should be the array of pointers to other lists. Re: We shouldn't have these raw in the layout.
-  // Idea. This works for standard INT0_ARRAY promotions and for ZIP_ARRAY promotions. With a FOLIO wrapping everything, we get promotions for free (indexing is maxed at O(4) because the number of promoted vectors is limited). Then we just have a folio of compressed vectors: same story. This is awkward on disk but fine in-memory.
+  // Idea. This works for standard INT0_ARRAY promotions and for ZIP_ARR4Y promotions. With a FOLIO wrapping everything, we get promotions for free (indexing is maxed at O(4) because the number of promoted vectors is limited). Then we just have a folio of compressed vectors: same story. This is awkward on disk but fine in-memory.
   // Idea. We'd want folio to track sorted_asc/sorted_desc across all of its sublists (+ table subcolumns). This is an easy check. storing it is a little harder. On writes you check to see if the sublist was broken (its attribute removed), then you remove it globally. On appends, same thing, you check that it was preserved.
 
   // Remember. You put a list of "A_SOCKET_MAPPED_OBJ" inside a FOLIO that points to remote tables and then you can execute queries remotely (you need to do this with one thread per socket-obj, so it happens asynchronously). When the tables are local inside of a folio, that's just a "striped" table or parted or whatever we called it, you don't typically want to multithread this, the local version, unless you're connected to multiple disks. Does it keep the socket open or closed (like http)? Error handling? Timeouts?
@@ -608,7 +610,7 @@ struct A_STRIDE_ARRAY : A_GROUPED
   // Remark. Another connection is that LAYOUT_COUNTED_JUMP_LIST is a layout,
   // but STRIDE_ARRAY is a GROUPED and a presented type, so is barred from
   // certain layout operations: I think this connection is tenuous though.
-  // Remark. Possibly there is a connection b/t JUMP_LIST and ZIP_ARRAY, but we
+  // Remark. Possibly there is a connection b/t JUMP_LIST and ZIP_ARR4Y, but we
   // don't know yet b/c we haven't done JUMP_LIST
   // NB. The benefit of doing a STRIDE_ARRAY (incl. over a JUMP_LIST) is that
   // you can compact a list of arbitrary ragged objects into a constant number
@@ -672,8 +674,16 @@ struct A_MIXED_SIGN_BIGINT_CORD_ARRAY : A_CORD_ARRAY
 
 struct A_ZIP_ARRAY : A_GROUPED
 { 
+  SLOP get_attribute(ZIP_ATTRIBUTE a);
+  void cow_set_attribute(ZIP_ATTRIBUTE a, const SLOP& x);
+  void init_default_attributes();
+  void init_for_bundle(ZIP_ALGO_BUNDLE b);
 
-
+  virtual I layout_index_of_grouped_metadata(){return 0;}
+  virtual I layout_index_of_grouped_cache(){   return 1;}
+  virtual I layout_index_of_grouped_values(){  return 2;}
+  virtual I layout_index_of_grouped_keys(){    return 3;}
+  virtual I layout_index_of_grouped_indices(){ return 3;}
 };
 
 #pragma mark - Memory Mapped

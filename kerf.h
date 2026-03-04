@@ -12,23 +12,18 @@
   #define TEST_MACROS (false)
 #endif
 
-#define TEST_DRIVE_CASES                        (false && TEST_MACROS) // Feature. later, separate this as a command line -D define like -DDEBUG. Separate kerf tests into "unit" and "full"
+#define TEST_DRIVE_CASES                        (true && TEST_MACROS) // Feature. later, separate this as a command line -D define like -DDEBUG. Separate kerf tests into "unit" and "full"
 #define TEST_TRACK_ALLOCATIONS                  (true && TEST_MACROS)
 #define TEST_TRY_POOL_ZEROES_DEALLOC            (true && TEST_MACROS)
 #define TEST_TRY_POOL_NEVER_REUSES_STRUCTS      (false && TEST_MACROS)
 //////////////////////////////////////////////////////////////
-#define CONSOLE                                 (true)   // see kerf1 CONSOL defines for expansion
-#define KERF_NAMESPACE                          kerf 
-#define FILENAME_BINARY_EXTENSION               (".dat") // kerf objects I write to drive end in this filename extension
-#define FILENAME_MULTIFILE_SEPARATOR            ("|")    // Try '|' or '-'. Dash is maybe too common (collisions). Dot ('.') would interfere w/ extensions
-#define FILENAME_DIRECTORY_BASE                 ("_self")
-#define FILENAME_WORKSPACE_MARKER               ("_workspace")
+#define CONSOLE                                 (false)   // see kerf1 CONSOLE defines for expansion
 //////////////////////////////////////////////////////////////
 // User-editable Toggleable Compiler Constants ///////////////
+#define PREFERRED_RLINK3_SLAB4_FLAT_JUMP        (0)
 #define SLOP_DESTRUCT_IS_CRITICAL_SECTION       (true)  // true: slower and ctrl-c leaks fewer objects; false: faster and ctrl-c leaks more objects.
 #define PERMIT_SEGV_LIKE_IN_CRITICAL_SECTION    (true)  // when false, you'll hang silently on a SIGSEGV and it will look like a deadlock, but we'd rather crash
 #define CPP_WORKSTACK_DESIRED                   (true)
-#define PREFERRED_RLINK3_SLAB4_FLAT_JUMP        (0)
 #define KERF_MAX_NORMALIZABLE_THREAD_COUNT      (2048)  // widened from 12 now that r_slab_reference_count is 16-bit. we may elect to tie this to system limits or CPU count or somesuch. I think maybe even, we want > c*(1+c) where c==#cpus, one thread for each vm, and then a way for a vm to use the other processors. but this ignores other utility threads
 #define EARLY_QUEUE_DEFAULT_CAPACITY            (8)     // 1234. the higher, the more performance. should probably be based off whatever the system allows us to have maximum. we want it higher than GENERIC_DEPTH_LIMIT (if recursively opening handles during directory write)
 #define INT_INFS_AND_NANS_SQUASH                (true)  // should a 64-bit int inf become a 32-bit int inf?
@@ -43,12 +38,14 @@
 #define LENGTH_1_LISTS_RECONCILE_WITH_N         (true)
 #define BYTE_MSBIT0_TO_LSBIT7_IF_TRUE           (true)
 #define CTRL_C_EXIT_CODE                        (130)   // bash ctrl+c script exit code
+#define ASAN_STACKTRACE_ON_SIGABRT              (true)
 #define SECURITY_ALLOW_LONGJMP_FROM_SIGNAL      (true)  // technically, CTRL+C is a risk (sendmail bug) | Note: "POSIX.1-2008 Technical Corrigendum 2 adds longjmp() and siglongjmp() to the list of async-signal-safe functions."
 #define TRUTHTABLE_VALUE_FOR_NIL                (false)
 #define THREAD_POOL_SUPPORTS_FUTURES            (true)  // TODO. I didn't have time to see if the C++ futures implementation does "bad stuff" or is just simple objects without mutex/threads/shared-leaks/etc.
 #define DATES_ALLOW_DASHED                      (false)
 #define GENERIC_DEPTH_LIMIT                     (100)
 #define SCHEDULER_YIELD_OVER_CPU_PAUSE          (false)
+#define JSON_PRINT_ESCAPED_FORWARD_SLASH        (false) // apparently JSON was never required to escape in print (must allow in parse)
 //////////////////////////////////////////////////////////////
 #define PARSE_RESERVED_CASE_INSENSITIVE         (true)
 #define PARSE_MAX_DEPTH                         (GENERIC_DEPTH_LIMIT)
@@ -58,7 +55,14 @@
 #define HASH_AVOID_TYPE_COLLISIONS              (true)
 #define HASH_CPP_TYPE                           UI4     // alternatively, UI3, I4, or I3
 //////////////////////////////////////////////////////////////
+#define ZIP_FORMAT_CURRENT_VERSION_NUMBER       (1)
+#define ZIP_FORMAT_DEFAULT_ALGORITHM            (ZIP_ALGORITHM_LZ4_1)
+#define ZIP_FORMAT_DEFAULT_WINDOW_BYTES         (ZIP_FORMAT_DEFAULT_LZ4_WINDOW_BYTES)
+#define ZIP_FORMAT_DEFAULT_LZ4_WINDOW_BYTES     (16384) // 4096  16384  65536
+#define ZIP_FORMAT_DEFAULT_ZSTD_WINDOW_BYTES    (ZIP_FORMAT_DEFAULT_LZ4_WINDOW_BYTES)
+//////////////////////////////////////////////////////////////
 // Non-toggle Compiler Constants /////////////////////////////
+#define KERF_NAMESPACE                          kerf 
 #define SLAB_ALIGN                              (8)          // Align is determined by the maximal width of the union's primitive types, in this case I or F and so on
 #define MINIMAL_ALIGN                           (SLAB_ALIGN) // If we allow smaller layout types/atoms, such as 4 == maximal I2/int32_t/F2/float32, we can use s/t smaller than SLAB_ALIGN
 #define LOG_SLAB_WIDTH                          (4)
@@ -90,6 +94,10 @@
 #define CHAR_ARRAY_QUOTE_FRONT                  ("`")
 #define CHAR_ARRAY_QUOTE_BACK                   ("`")
 #define CHAR_ARRAY_QUOTE_ESCAPE_QUOTE           ("`")   // use "\\" to no-op
+#define FILENAME_BINARY_EXTENSION               (".dat") // kerf objects I write to drive end in this filename extension
+#define FILENAME_MULTIFILE_SEPARATOR            ("|")    // Try '|' or '-'. Dash is maybe too common (collisions). Dot ('.') would interfere w/ extensions. Exclamation point '!' is probably good
+#define FILENAME_DIRECTORY_BASE                 ("_self")
+#define FILENAME_WORKSPACE_MARKER               ("_workspace")
 #if   PREFERRED_RLINK3_SLAB4_FLAT_JUMP == 0
   #define PREFERRED_MIXED_TYPE                  UNTYPED_RLINK3_ARRAY
   #define PREFERRED_MIXED_CLASS                 A_UNTYPED_RLINK3_ARRAY
@@ -107,15 +115,6 @@
   #define PREFERRED_MIXED_CLASS                 A_UNTYPED_JUMP_LIST
   // #define PREFERRED_MIXED_LAYOUT               LAYOUT_TYPE_COUNTED_JUMP_LIST
 #endif
-//////////////////////////////////////////////////////////////
-#define TWO(x,y) (((x)<<8)|(y))
-//////////////////////////////////////////////////////////////
-
-#ifndef __has_builtin  // both clang and gcc support this
-#define __has_builtin(x) 0
-#endif
-
-#define __kerfthread thread_local // this is a port from Kerf1. normally we use normalized thread ids.
 
 #include <atomic>
 #include <cfloat>
@@ -148,7 +147,15 @@
 #if DEBUG
   #include <gtest/gtest.h> // macOS: $ brew install googletest
 #endif
-#include "pcg/pcg_random.hpp"
+#include "include/pcg/pcg_random.hpp"
+#include "include/lz4/lz4.h"
+///////////////////////////////////////////
+// lz4 src has its own dev complaints we want suppressed
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wdeprecated-declarations"
+#include "include/lz4/lz4.c"
+#pragma clang diagnostic pop
+///////////////////////////////////////////
 #include <event2/event.h>
 #include <editline/readline.h>
 ///////////////////////////////////////////
@@ -179,6 +186,22 @@
 #endif
 
 
+#ifndef __has_builtin  // both clang and gcc support this
+#define __has_builtin(x) 0
+#endif
+
+#if __has_builtin(__builtin_isnan)
+#undef  isnan                        //see: https://github.com/kevinlawler/kerf-source/issues/34
+#define isnan(x) __builtin_isnan(x)  //this gives a 4x speedup for eg `sum()` on Linux. 
+#endif
+
+#if __has_builtin(__builtin_isinf)
+#undef  isinf                        
+#define isinf(x) __builtin_isinf(x)  
+#endif
+
+#define __kerfthread thread_local // this is a port from Kerf1. normally we use normalized thread ids.
+
 //POTENTIAL_OPTIMIZATION_POINT
 //almost certainly doesn't matter, but Hacker's Delight, as well as Stanford bithacks, has
 //the bytewise ops for ABS, etc.
@@ -195,15 +218,15 @@
 #define MIN(a, b) (((a) < (b)) ? (a) : (b))
 #endif
 
-#if __has_builtin(__builtin_isnan)
-#undef  isnan                        //see: https://github.com/kevinlawler/kerf-source/issues/34
-#define isnan(x) __builtin_isnan(x)  //this gives a 4x speedup for eg `sum()` on Linux. 
-#endif
 
-#if __has_builtin(__builtin_isinf)
-#undef  isinf                        
-#define isinf(x) __builtin_isinf(x)  
-#endif
+#define BITFIELD_WIDTH(T, member) []() constexpr {  \
+    T tmp{};                                        \
+    tmp.member = ~decltype(tmp.member){};           \
+    return std::popcount(                           \
+        static_cast<std::make_unsigned_t<           \
+            decltype(tmp.member)>>(tmp.member));    \
+}()
+
 
 #define ARRAY_LEN(x) (sizeof(x)/sizeof((x)[0]))
 #define SLAB_ALIGNED(x) (0 == ((x) % SLAB_ALIGN))
@@ -236,10 +259,12 @@
 #define TIME(...) {F _d; RTIME(_d,__VA_ARGS__); fprintf(stderr,"[DEBUG] Elapsed:%.7f\n",_d);}
 // #define er(...) {fprintf(stderr, "[DEBUG] %s:%u: %s\n",__FILE__, __LINE__, #__VA_ARGS__);}
 #define er(...) {kerr() << "[DEBUG] " << __FILE__ << ":" << __LINE__ << " " << #__VA_ARGS__ << "\n";}
-#define die(...) {{er(__VA_ARGS__);} abort();}
+#define erdie(...) {std::cerr << "[DEBUG] " << __FILE__ << ":" << __LINE__ << " " << #__VA_ARGS__ << "\n";} // avoid kerr() recursive loops on die message
+#define die(...) {{erdie(__VA_ARGS__);} abort();}
 #define DO(n,...) {I i=0,_i=(I)(n);for(;i<_i;++i){__VA_ARGS__;}}
 #define DO2(n,...){I j=0,_j=(I)(n);for(;j<_j;++j){__VA_ARGS__;}}
 #define DO3(n,...){I k=0,_k=(I)(n);for(;k<_k;++k){__VA_ARGS__;}}
+#define TWO(x,y) (((x)<<8)|(y))
 
 // Observation. 2021.10.17 So, popping workstacks before jmping solved a certain problem where (I think) stack data was getting corrupted from the frame around where the ERROR(.) was called, so the thinking here [in adding the workstack pop] was to do it as soon as possible before anything could get corrupted. Technically, leaving any automatic objects on the stack before jmping is supposed to be undefined behavior in C++, so perhaps it's worth considering switching to try/catch, or offering that as a compile-time toggle. 
 #define ERROR(x) ({if(TEST_MACROS)er(<-- err loc); pop_workstacks_for_normalized_thread_id(); siglongjmp(*The_Soft_Jmp_Envs[kerf_get_cached_normalized_thread_id()], x); NULL;})
@@ -261,9 +286,12 @@ typedef void* V;
 typedef char C;
 typedef unsigned char UC;
 typedef signed char SC;
-typedef __uint128_t     UI4;    // or unsigned _ExtInt(128)
+typedef __uint128_t     UI4;    // or unsigned _BitInt(128)
 typedef uint64_t    UI, UI3;
-typedef __int128_t       I4;    // or   signed _ExtInt(128)
+typedef uint32_t        UI2;
+typedef uint16_t        UI1;
+typedef uint8_t         UI0;
+typedef __int128_t       I4;    // or   signed _BitInt(128)
 typedef int64_t      I,  I3;
 typedef int32_t          I2;
 typedef int16_t          I1;
@@ -303,6 +331,7 @@ bool The_Language_Initialized_Flag = false;
 #include "rng.h"
 #include "init.h"
 #include "interpreter.h"
+#include "zip.h"
 
 #include "jump.cc"
 #include "cores.cc"
@@ -325,6 +354,7 @@ bool The_Language_Initialized_Flag = false;
 #include "rng.cc"
 #include "init.cc"
 #include "interpreter.cc"
+#include "zip.cc"
 #if DEBUG
   #include "test.cc"
 #endif

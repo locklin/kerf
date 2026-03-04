@@ -24,10 +24,11 @@ namespace KERF_NAMESPACE {
 //
 // Idea. Feature. You can also change [hand off] the sutex write owner by changing it
 // from your thread id to the other thread's id. (assert() your ownership first).
+// Note that relinquishing thread must RELEASE and receiving thread must ACQUIRE
 
-#ifdef _ExtInt
-  typedef signed _ExtInt(round_up_nearest_power_of_2(SUTEX_BIT_LENGTH)) SUTEX_CONTAINER;
-#else //only clang++ has _ExtInt currently 2021.08.13
+#if false //only clang++ has _ExtInt currently 2021.08.13. it's BitInt now, still not supporting atomics 2026.02.20.
+  typedef signed _BitInt(round_up_nearest_power_of_2(SUTEX_BIT_LENGTH)) SUTEX_CONTAINER;
+#else 
   #if   SUTEX_BIT_LENGTH <=  8
   typedef int8_t SUTEX_CONTAINER;
   #elif SUTEX_BIT_LENGTH <= 16
@@ -189,7 +190,7 @@ struct kerr
 
   kerr(bool use_stderr = true) : use_stderr(use_stderr){}
 
-  kerr& operator<<(auto x)
+  kerr& operator<<(auto&& x)
   { 
     (use_stderr ? std::cerr : std::cout) << x;
     return *this;
