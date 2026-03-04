@@ -906,7 +906,7 @@ SLOP FILE_OPERATIONS::read_from_drive_path_flat_singlefile(std::string path)
       s->reference_management_arena = REFERENCE_MANAGEMENT_ARENA_CPP_WORKSTACK;
       s->m_memory_expansion_size = floor_log_2(length);
       s->r_slab_reference_count = 0;
-      s->sutex = {0};
+      s->zero_sutex_values();
     }
 
     bool memory_mapped_descend = false;
