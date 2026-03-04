@@ -29,7 +29,7 @@
 #define PERMIT_SEGV_LIKE_IN_CRITICAL_SECTION    (true)  // when false, you'll hang silently on a SIGSEGV and it will look like a deadlock, but we'd rather crash
 #define CPP_WORKSTACK_DESIRED                   (true)
 #define PREFERRED_RLINK3_SLAB4_FLAT_JUMP        (0)
-#define KERF_MAX_NORMALIZABLE_THREAD_COUNT      (12)    // (2048) // we may elect to tie this to system limits or CPU count or somesuch. I think maybe even, we want > c*(1+c) where c==#cpus, one thread for each vm, and then a way for a vm to use the other processors. but this ignores other utility threads
+#define KERF_MAX_NORMALIZABLE_THREAD_COUNT      (2048)  // widened from 12 now that r_slab_reference_count is 16-bit. we may elect to tie this to system limits or CPU count or somesuch. I think maybe even, we want > c*(1+c) where c==#cpus, one thread for each vm, and then a way for a vm to use the other processors. but this ignores other utility threads
 #define EARLY_QUEUE_DEFAULT_CAPACITY            (8)     // 1234. the higher, the more performance. should probably be based off whatever the system allows us to have maximum. we want it higher than GENERIC_DEPTH_LIMIT (if recursively opening handles during directory write)
 #define INT_INFS_AND_NANS_SQUASH                (true)  // should a 64-bit int inf become a 32-bit int inf?
 #define INT_INFS_AND_NANS_UNSQUASH              (true)  // should a 32-bit int inf become a 64-bit int inf?

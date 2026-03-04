@@ -437,7 +437,8 @@ int THREAD::start()
 
     copy_must_delete = new auto(*this);
 
-    s = pthread_create(&The_Normalized_Thread_Id_Table[this->normalized_id], &this->attr, &this->kerf_init_wrapper, copy_must_delete); // deleted inside
+    s = pthread_create(&this->thr, &this->attr, &this->kerf_init_wrapper, copy_must_delete); // deleted inside
+    The_Normalized_Thread_Id_Table[this->normalized_id] = this->thr;
 
     if (s != 0)
     {
@@ -465,7 +466,7 @@ int THREAD::start()
 
 int THREAD::join(void **retval)
 {
-  return pthread_join(The_Normalized_Thread_Id_Table[this->normalized_id], retval);
+  return pthread_join(this->thr, retval);
 }
 
 } // namespace
