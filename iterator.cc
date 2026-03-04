@@ -133,7 +133,7 @@ void ITERATOR_LAYOUT::ITERATOR_LAYOUT_HELPER(const SLOP& parent, bool last)
   }
 
   SLAB s = (SLAB){.t_slab_object_layout_type=LAYOUT_TYPE_TAPE_HEAD_UNCOUNTED_ATOM,
-                  .second_four=r.header_pointer_begin()->second_four,
+                  .third_two=r.header_pointer_begin()->third_two,
                   .v = target};
   s.zero_sutex_values();
   s.presented_type=p;

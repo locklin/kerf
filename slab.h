@@ -101,8 +101,8 @@ REFERENCE_MANAGEMENT_ARENA_TYPE reference_management_arena:2;
 
            struct {
             UI same_bit_width_as_layout_type:4;
-            UI memory_header_wo_layout:15;
-            UI mh_thing_filler:13;
+            UI memory_header_wo_layout:8;
+            UI mh_thing_filler:20;
            }  __attribute__ ((packed));
 
            struct {

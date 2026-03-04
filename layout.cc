@@ -811,7 +811,7 @@ void LAYOUT_BASE::promote_or_expand_via_widths(I settled_log_width, I incoming_c
 
   // second_four should happen before setting presented_type if presented_type is inside it
   // assert(offsetof(SLAB,presented_type) == offsetof(SLAB, second_four) + sizeof(dest->second_four) - 1); 
-  dest->second_four = this->header_pointer_begin()->second_four;
+  dest->third_two = this->header_pointer_begin()->third_two;
   // dest->vector_container_width_cap_type = this->slabp->vector_container_width_cap_type;
 
   // TODO? to genericize this...we need to do type promotion stuff or pass it or something (eg float2->float3, *->slab4, ...)
@@ -1412,7 +1412,7 @@ void LAYOUT_BASE::cow_amend_one(I k, const SLOP &rhs)
     SLOP u(UNTYPED_ARRAY);
 
     // inherit layout/presented attributes (Question. Does this work in all cases (UNTYPED_ARRAY won't genuinely recognize some eg INT*_ARRAY?, but must port them)?)
-    u.layout()->header_pointer_begin()->second_four = layout()->header_pointer_begin()->second_four;
+    u.layout()->header_pointer_begin()->third_two = layout()->header_pointer_begin()->third_two;
     // cleanup
     u.layout()->header_pointer_begin()->presented_type = UNTYPED_ARRAY;
     u.layout()->header_set_byte_counter_to_value_unchecked(0);

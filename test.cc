@@ -232,7 +232,6 @@ kerr() << "c < d: " << (c < d) << "\n";
 
 
   EXPECT_TRUE (SLOP(1,2) < SLOP(1,3));
-exit(-1);
   EXPECT_FALSE(SLOP(1,2) > SLOP(1,3));
   EXPECT_FALSE(SLOP(1,3) < SLOP(1,2));
   EXPECT_TRUE (SLOP(1,3) > SLOP(1,2));

@@ -332,6 +332,7 @@ SLAB* SLOP::force_copy_slab_to_ram(bool reference_increment_children, bool prese
   }
 
   dest->t_slab_object_layout_type = revised_layout;
+  dest->presented_type = this->layout()->header_get_presented_type();
   dest->zero_sutex_values();
 
   if(reference_increment_children)

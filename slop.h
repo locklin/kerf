@@ -200,7 +200,6 @@ struct SLOP {
     switch(p)
     {
       default:
-        std::cerr << "presented_type: " << (p) << "\n";
         die(Unregistered PRESENTED_TYPE in SLOP constructor)
       case NIL_UNIT:
         // unoptimized, using initialization list (iff NIL is all zeroes object): SLOP() : SLOP((SLAB*)&slab_data) { }

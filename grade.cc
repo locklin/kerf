@@ -109,12 +109,6 @@ std::weak_ordering PRESENTED_BASE::compare(const SLOP& x)
 
 
     auto g = [&](const SLOP& a, const SLOP& b) { c = a.compare(b);
-kerr() << "a: " << (a) << "\n";
-kerr() << "b: " << (b) << "\n";
-kerr() << "c==0: " << (0==c) << "\n";
-kerr() << "looks like indexing is broken somehow and/or comparing \n";
-
-
       early_break_flag = (0 !=c);};  // std::is_neq(c);};
     parent()->iterator_duplex_presented_subslop(g, x, &early_break_flag);
 
